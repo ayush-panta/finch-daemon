@@ -123,7 +123,6 @@ func (h FinchCredentialHelper) Get(serverURL string) (string, string, error) {
 // getFromSimpleSocket connects to the simple socket protocol
 func (h FinchCredentialHelper) getFromCredSocket(serverURL string) (string, string, error) {
 
-
 	// follow pattern above for debug
 	credentialSocketPath := os.Getenv("FINCH_CREDENTIAL_SOCKET")
 	if credentialSocketPath == "" {
@@ -154,7 +153,7 @@ func (h FinchCredentialHelper) getFromCredSocket(serverURL string) (string, stri
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
 
-	// parse response into credential struct
+	// parse response into credential struct (auth config breaking)
 	var cred struct {
 		ServerURL string `json:"ServerURL"`
 		Username  string `json:"Username"`
