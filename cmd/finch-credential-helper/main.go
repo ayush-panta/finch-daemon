@@ -51,23 +51,12 @@ func (h FinchCredentialHelper) List() (map[string]string, error) {
 
 // Get retrieves credentials from the Finch daemon.
 func (h FinchCredentialHelper) Get(serverURL string) (string, string, error) {
-	// Debug logging to both stderr and file
-	logFile, _ := os.OpenFile("/tmp/cred-helper.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if logFile != nil {
-		defer logFile.Close()
-		fmt.Fprintf(logFile, "[CRED-HELPER] Get called for serverURL: %s\n", serverURL)
-		fmt.Fprintf(logFile, "[CRED-HELPER] FINCH_CREDS_SIMPLE_SOCKET: %s\n", os.Getenv("FINCH_CREDS_SIMPLE_SOCKET"))
-	}
-	fmt.Fprintf(os.Stderr, "[CRED-HELPER] Get called for serverURL: %s\n", serverURL)
-	fmt.Fprintf(os.Stderr, "[CRED-HELPER] FINCH_CREDS_SIMPLE_SOCKET: %s\n", os.Getenv("FINCH_CREDS_SIMPLE_SOCKET"))
 
 	// Check if using simple socket protocol
 	if os.Getenv("FINCH_CREDS_SIMPLE_SOCKET") != "" {
 		fmt.Fprintf(os.Stderr, "[CRED-HELPER] Using simple socket protocol\n")
 		return h.getFromSimpleSocket(serverURL)
 	}
-
-	fmt.Fprintf(os.Stderr, "[CRED-HELPER] Using finch-daemon protocol\n")
 
 	buildID := os.Getenv("FINCH_BUILD_ID")
 	if buildID == "" {
@@ -136,21 +125,15 @@ func (h FinchCredentialHelper) getFromSimpleSocket(serverURL string) (string, st
 		socketPath = "/tmp/creds.sock"
 	}
 
-	fmt.Fprintf(os.Stderr, "[CRED-HELPER] Connecting to socket: %s\n", socketPath)
-
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[CRED-HELPER] Failed to connect to socket: %v\n", err)
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
-	fmt.Fprintf(os.Stderr, "[CRED-HELPER] Connected to socket successfully\n")
 	defer conn.Close()
 
 	// Send get command and server URL
-	fmt.Fprintf(os.Stderr, "[CRED-HELPER] Sending: get\n%s\n", serverURL)
 	_, err = conn.Write([]byte("get\n" + serverURL + "\n"))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[CRED-HELPER] Failed to write to socket: %v\n", err)
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
 
@@ -158,10 +141,8 @@ func (h FinchCredentialHelper) getFromSimpleSocket(serverURL string) (string, st
 	response := make([]byte, 4096)
 	n, err := conn.Read(response)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[CRED-HELPER] Failed to read from socket: %v\n", err)
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
-	fmt.Fprintf(os.Stderr, "[CRED-HELPER] Received response: %s\n", string(response[:n]))
 
 	// what happens after this
 	// neither returning creds or credentials found in response
@@ -173,17 +154,14 @@ func (h FinchCredentialHelper) getFromSimpleSocket(serverURL string) (string, st
 		Secret    string `json:"Secret"`
 	}
 	if err := json.Unmarshal(response[:n], &cred); err != nil {
-		fmt.Fprintf(os.Stderr, "[CRED-HELPER] Unmarshal error: %v\n", err)
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
 
 	// Return empty credentials if no credentials found
 	if cred.Username == "" && cred.Secret == "" {
-		fmt.Fprintf(os.Stderr, "[CRED-HELPER] No credentials found in response\n")
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
 
-	fmt.Fprintf(os.Stderr, "[CRED-HELPER] Returning credentials for user: %s\n", cred.Username)
 	return cred.Username, cred.Secret, nil
 }
 
