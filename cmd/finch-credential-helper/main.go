@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	dockertypes "github.com/docker/cli/cli/config/types"
@@ -24,6 +25,7 @@ import (
 const (
 	// ConnectionTimeout is the timeout for connecting to the credential socket.
 	ConnectionTimeout = 5 * time.Second
+	BufferSize = 4096
 )
 
 // CredentialSocketPath is the path to the credential socket.
@@ -50,12 +52,12 @@ func (h FinchCredentialHelper) List() (map[string]string, error) {
 }
 
 // Get retrieves credentials from the Finch daemon.
+// amazonq-ignore-next-line
 func (h FinchCredentialHelper) Get(serverURL string) (string, string, error) {
 
-	// Check if using simple socket protocol
-	if os.Getenv("FINCH_CREDS_SIMPLE_SOCKET") != "" {
-		fmt.Fprintf(os.Stderr, "[CRED-HELPER] Using simple socket protocol\n")
-		return h.getFromSimpleSocket(serverURL)
+	// Env. variable from nerdctl tells us to prompt Get through socket
+	if os.Getenv("USE_NATIVE_CREDSTORE") != "" {
+		return h.getFromCredSocket(serverURL)
 	}
 
 	buildID := os.Getenv("FINCH_BUILD_ID")
@@ -119,50 +121,51 @@ func (h FinchCredentialHelper) Get(serverURL string) (string, string, error) {
 }
 
 // getFromSimpleSocket connects to the simple socket protocol
-func (h FinchCredentialHelper) getFromSimpleSocket(serverURL string) (string, string, error) {
-	socketPath := os.Getenv("FINCH_CREDENTIAL_SOCKET")
-	if socketPath == "" {
-		socketPath = "/tmp/creds.sock"
+func (h FinchCredentialHelper) getFromCredSocket(serverURL string) (string, string, error) {
+
+
+	// follow pattern above for debug
+	credentialSocketPath := os.Getenv("FINCH_CREDENTIAL_SOCKET")
+	if credentialSocketPath == "" {
+		credentialSocketPath = "/tmp/creds.sock"
 	}
 
-	conn, err := net.Dial("unix", socketPath)
+	// connect to socket
+	conn, err := net.Dial("unix", credentialSocketPath)
 	if err != nil {
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
 	defer conn.Close()
 
-	// Send get command and server URL
+	// simple sanitize to fight injection
+	serverURL = strings.ReplaceAll(serverURL, "\n", "")
+	serverURL = strings.ReplaceAll(serverURL, "\r", "")
+
+	// send get command with URL through socket
 	_, err = conn.Write([]byte("get\n" + serverURL + "\n"))
 	if err != nil {
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
 
-	// Read response with larger buffer for ECR tokens
-	response := make([]byte, 4096)
+	// read response
+	response := make([]byte, BufferSize)
 	n, err := conn.Read(response)
 	if err != nil {
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
 
-	// what happens after this
-	// neither returning creds or credentials found in response
-
-	// Parse JSON response
-	var cred struct {
-		ServerURL string `json:"ServerURL"`
-		Username  string `json:"Username"`
-		Secret    string `json:"Secret"`
-	}
-	if err := json.Unmarshal(response[:n], &cred); err != nil {
+	// parse response into credential struct
+	var authConfig dockertypes.AuthConfig
+	if err := json.Unmarshal(response[:n], &authConfig); err != nil {
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
 
 	// Return empty credentials if no credentials found
-	if cred.Username == "" && cred.Secret == "" {
+	if authConfig.Username == "" && authConfig.Password == "" {
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
 
-	return cred.Username, cred.Secret, nil
+	return authConfig.Username, authConfig.Password, nil
 }
 
 func main() {
