@@ -155,17 +155,21 @@ func (h FinchCredentialHelper) getFromCredSocket(serverURL string) (string, stri
 	}
 
 	// parse response into credential struct
-	var authConfig dockertypes.AuthConfig
-	if err := json.Unmarshal(response[:n], &authConfig); err != nil {
+	var cred struct {
+		ServerURL string `json:"ServerURL"`
+		Username  string `json:"Username"`
+		Secret    string `json:"Secret"`
+	}
+	if err := json.Unmarshal(response[:n], &cred); err != nil {
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
 
 	// Return empty credentials if no credentials found
-	if authConfig.Username == "" && authConfig.Password == "" {
+	if cred.Username == "" && cred.Secret == "" {
 		return "", "", credentials.NewErrCredentialsNotFound()
 	}
 
-	return authConfig.Username, authConfig.Password, nil
+	return cred.Username, cred.Secret, nil
 }
 
 func main() {
