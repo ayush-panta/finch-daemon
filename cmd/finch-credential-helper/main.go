@@ -126,7 +126,7 @@ func (h FinchCredentialHelper) getFromCredSocket(serverURL string) (string, stri
 	// follow pattern above for debug
 	credentialSocketPath := os.Getenv("FINCH_CREDENTIAL_SOCKET")
 	if credentialSocketPath == "" {
-		credentialSocketPath = "/run/creds.sock"
+		credentialSocketPath = "/tmp/creds.sock"
 	}
 
 	// connect to socket
