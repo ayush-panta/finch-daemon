@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -126,7 +127,18 @@ func (h FinchCredentialHelper) getFromCredSocket(serverURL string) (string, stri
 	// follow pattern above for debug
 	credentialSocketPath := os.Getenv("FINCH_CREDENTIAL_SOCKET")
 	if credentialSocketPath == "" {
-		credentialSocketPath = "/tmp/creds.sock"
+		// detect WSL; Windows Finch uses direct fs mount instead of port forwarding
+		if strings.Contains(os.Getenv("PATH"), "/mnt/c") || os.Getenv("WSL_DISTRO_NAME") != "" {
+			finchDir := os.Getenv("FINCH_DIR")
+			if finchDir != "" {
+				credentialSocketPath = filepath.Join(finchDir, "lima", "data", "finch", "sock", "creds.sock")
+			} else {
+				return "", "", fmt.Errorf("FINCH_DIR environment variable not set; cannot find mounted socket")
+			}
+		} else {
+			// reverse port forwarded sock from mac.yaml
+			credentialSocketPath = "/run/finch-user-sockets/creds.sock"
+		}
 	}
 
 	// connect to socket
