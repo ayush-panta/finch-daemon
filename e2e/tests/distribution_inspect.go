@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
+	"github.com/docker/go-connections/nat"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
@@ -22,6 +22,7 @@ import (
 
 	registrytypes "github.com/docker/docker/api/types/registry"
 	"github.com/runfinch/finch-daemon/api/response"
+	"github.com/runfinch/finch-daemon/api/types"
 	"github.com/runfinch/finch-daemon/e2e/client"
 )
 
@@ -54,31 +55,29 @@ func DistributionInspect(opt *option.Option) {
 			htpasswdDir := filepath.Dir(ffs.CreateTempFile(filename, htpasswd))
 			DeferCleanup(os.RemoveAll, htpasswdDir)
 			port := fnet.GetFreePort()
-			containerID := command.StdoutStr(opt, "run",
-				"-dp", fmt.Sprintf("%d:5000", port),
-				"--name", "registry",
-				"-v", fmt.Sprintf("%s:/auth", htpasswdDir),
-				"-e", "REGISTRY_AUTH=htpasswd",
-				"-e", "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm",
-				"-e", fmt.Sprintf("REGISTRY_AUTH_HTPASSWD_PATH=/auth/%s", filename),
-				registryImage)
-			// Wait for container to be running
-			tries := 0
-			for command.StdoutStr(opt, "inspect", "-f", "{{.State.Running}}", containerID) != "true" {
-				if tries >= 5 {
-					Fail("Registry container failed to start after 5 seconds")
-				}
-				time.Sleep(1 * time.Second)
-				tries++
-			}
-			// Wait for registry service to be ready
-			time.Sleep(10 * time.Second)
+			httpRunContainerWithOptions(uClient, version, "registry", types.ContainerCreateRequest{
+				ContainerConfig: types.ContainerConfig{
+					Image: registryImage,
+					Env: []string{
+						"REGISTRY_AUTH=htpasswd",
+						"REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm",
+						fmt.Sprintf("REGISTRY_AUTH_HTPASSWD_PATH=/auth/%s", filename),
+					},
+				},
+				HostConfig: types.ContainerHostConfig{
+					Binds: []string{fmt.Sprintf("%s:/auth", htpasswdDir)},
+					PortBindings: nat.PortMap{
+						"5000/tcp": []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: fmt.Sprintf("%d", port)}},
+					},
+				},
+			})
 			registry = fmt.Sprintf(`localhost:%d`, port)
 			authImageTag = fmt.Sprintf(`%s/test-login:tag`, registry)
 			buildContext := ffs.CreateBuildContext(fmt.Sprintf(`FROM %s
 	CMD ["echo", "bar"]
 		`, defaultImage))
 			DeferCleanup(os.RemoveAll, buildContext)
+			// Note: build command kept as CLI since HTTP build API requires sending a tar archive
 			command.Run(opt, "build", "-t", authImageTag, buildContext)
 		})
 
@@ -157,12 +156,13 @@ func DistributionInspect(opt *option.Option) {
 		})
 
 		It("should inspect an image with registry credentials when logged in", func() {
+			// Note: login/logout commands kept as CLI since there's no HTTP API equivalent
 			command.New(opt, "login", registry, "-u", testUser, "--password-stdin").
 				WithStdin(gbytes.BufferWithBytes([]byte(testPassword))).Run()
 			DeferCleanup(func() {
 				command.Run(opt, "logout", registry)
 			})
-			command.Run(opt, "push", authImageTag)
+			httpPushImage(uClient, version, authImageTag)
 
 			relativeUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/distribution/%s/json", authImageTag))
 
@@ -194,9 +194,10 @@ func DistributionInspect(opt *option.Option) {
 		})
 
 		It("should fail to inspect an image which needs registry credentials when not logged in", func() {
+			// Note: login/logout commands kept as CLI since there's no HTTP API equivalent
 			command.New(opt, "login", registry, "-u", testUser, "--password-stdin").
 				WithStdin(gbytes.BufferWithBytes([]byte(testPassword))).Run()
-			command.Run(opt, "push", authImageTag)
+			httpPushImage(uClient, version, authImageTag)
 			command.Run(opt, "logout", registry)
 
 			relativeUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/distribution/%s/json", authImageTag))
