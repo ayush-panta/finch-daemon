@@ -15,7 +15,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/option"
 
 	"github.com/runfinch/finch-daemon/api/types"
@@ -48,7 +47,7 @@ func OpaMiddlewareTest(opt *option.Option) {
 			unimplementedSpecifiedUrl = client.ConvertToFinchUrl(version, "/swarm")
 		})
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 		It("should allow GET version API request", func() {
 			res, err := uClient.Get(client.ConvertToFinchUrl("", "/version"))
@@ -63,7 +62,7 @@ func OpaMiddlewareTest(opt *option.Option) {
 		})
 
 		It("shold allow GET containers API request", func() {
-			id := command.StdoutStr(opt, "run", "-d", "--name", testContainerName, defaultImage, "sleep", "infinity")
+			id := httpRunContainer(uClient, version, testContainerName, defaultImage, []string{"sleep", "infinity"})
 			want := []types.ContainerListItem{
 				{
 					Id:    id[:12],

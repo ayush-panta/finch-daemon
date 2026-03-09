@@ -280,7 +280,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			httpStartContainer(uClient, version, testContainerName)
 
 			// ensure that mounted file exists in container
-			fileShouldExistInContainer(opt, testContainerName, ctrFilepath, fileContent)
+			fileShouldExistInContainer(testContainerName, ctrFilepath, fileContent)
 
 			// ensure that write permissions are enabled on the mounted directory
 			fileContent2 := "hello world again"
@@ -308,7 +308,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			httpStartContainer(uClient, version, testContainerName)
 
 			// ensure that mounted file exists in container
-			fileShouldExistInContainer(opt, testContainerName, ctrFilepath, fileContent)
+			fileShouldExistInContainer(testContainerName, ctrFilepath, fileContent)
 
 			// ensure that write permissions are disabled on the mounted directory
 			fileContent2 := "hello world again"
@@ -346,7 +346,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 			httpStartContainer(uClient, version, testContainerName2)
-			fileShouldExistInContainer(opt, testContainerName2, ctrFilepath, fileContent)
+			fileShouldExistInContainer(testContainerName2, ctrFilepath, fileContent)
 		})
 
 		// User and Environment Config

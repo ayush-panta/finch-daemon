@@ -12,7 +12,6 @@ import (
 	"github.com/docker/go-connections/nat"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/ffs"
 	"github.com/runfinch/common-tests/fnet"
 	"github.com/runfinch/common-tests/option"
@@ -31,10 +30,10 @@ func ImagePush(opt *option.Option) {
 		)
 
 		BeforeEach(func() {
-			command.RemoveAll(opt)
 			uClient = client.NewClient(GetDockerHostUrl())
 			// get the docker api version that will be tested
 			version = GetDockerApiVersion()
+			httpRemoveAll(uClient, version)
 
 			buildContext = ffs.CreateBuildContext(fmt.Sprintf(`FROM %s
 		CMD ["echo", "bar"]
@@ -54,13 +53,12 @@ func ImagePush(opt *option.Option) {
 		})
 
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 
 		It("should push an image successfully", func() {
 			name := fmt.Sprintf(`localhost:%d/test-push:tag`, port)
-			// Note: build command kept as CLI since HTTP build requires tar context
-			command.Run(opt, "build", "-t", name, buildContext)
+			httpBuildImage(uClient, version, name, buildContext)
 			relativeUrl := fmt.Sprintf("/images/%s/push", name)
 			url := client.ConvertToFinchUrl(version, relativeUrl)
 			resp, err := uClient.Post(url, "application/json", nil)
@@ -69,12 +67,11 @@ func ImagePush(opt *option.Option) {
 			Expect(resp.StatusCode).Should(Equal(http.StatusOK))
 			httpRemoveImage(uClient, version, name)
 			httpPullImage(uClient, version, name)
-			imageShouldExist(opt, name)
+			imageShouldExist(name)
 		})
 		It("should successfully push an image into two different registry", func() {
 			name := fmt.Sprintf(`localhost:%d/test-push:tag`, port)
-			// Note: build command kept as CLI since HTTP build requires tar context
-			command.Run(opt, "build", "-t", name, buildContext)
+			httpBuildImage(uClient, version, name, buildContext)
 			relativeUrl := fmt.Sprintf("/images/%s/push", name)
 			url := client.ConvertToFinchUrl(version, relativeUrl)
 			resp, err := uClient.Post(url, "application/json", nil)
@@ -82,7 +79,7 @@ func ImagePush(opt *option.Option) {
 			Expect(resp.StatusCode).Should(Equal(http.StatusOK))
 			httpRemoveImage(uClient, version, name)
 			httpPullImage(uClient, version, name)
-			imageShouldExist(opt, name)
+			imageShouldExist(name)
 
 			// spin off a second registry and tag the previously built image and push it to the second registry.
 			secondRegistryPort := fnet.GetFreePort()
@@ -106,7 +103,7 @@ func ImagePush(opt *option.Option) {
 			Expect(resp.StatusCode).Should(Equal(http.StatusOK))
 			httpRemoveImage(uClient, version, name2)
 			httpPullImage(uClient, version, name2)
-			imageShouldExist(opt, name2)
+			imageShouldExist(name2)
 		})
 
 		It("should return an error when pushing a nonexistent tag", func() {
@@ -122,8 +119,7 @@ func ImagePush(opt *option.Option) {
 			// pass the wrong port to mimic network failure
 			freePort := fnet.GetFreePort()
 			name := fmt.Sprintf(`localhost:%d/test-push:tag`, freePort)
-			// Note: build command kept as CLI since HTTP build requires tar context
-			command.Run(opt, "build", "-t", name, buildContext)
+			httpBuildImage(uClient, version, name, buildContext)
 			relativeUrl := fmt.Sprintf("/images/%s/push", name)
 			url := client.ConvertToFinchUrl(version, relativeUrl)
 			resp, err := uClient.Post(url, "application/json", nil)

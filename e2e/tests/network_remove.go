@@ -10,7 +10,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/option"
 
 	"github.com/runfinch/finch-daemon/api/types"
@@ -33,7 +32,7 @@ func NetworkRemove(opt *option.Option) {
 			apiUrl = client.ConvertToFinchUrl(version, relativeUrl)
 		})
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 		It("should remove the network by name", func() {
 			httpCreateNetwork(uClient, version, testNetwork)
@@ -44,7 +43,7 @@ func NetworkRemove(opt *option.Option) {
 			Expect(res.StatusCode).Should(Equal(http.StatusNoContent))
 		})
 		It("should remove the network by id", func() {
-			networkId := command.StdoutStr(opt, "network", "create", testNetwork)
+			networkId := httpCreateNetwork(uClient, version, testNetwork)
 			relativeUrl := fmt.Sprintf("/networks/%s", networkId)
 			apiUrl = client.ConvertToFinchUrl(version, relativeUrl)
 			req, err := http.NewRequest(http.MethodDelete, apiUrl, nil)

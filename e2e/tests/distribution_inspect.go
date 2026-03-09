@@ -14,8 +14,6 @@ import (
 	"github.com/docker/go-connections/nat"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/onsi/gomega/gbytes"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/ffs"
 	"github.com/runfinch/common-tests/fnet"
 	"github.com/runfinch/common-tests/option"
@@ -77,12 +75,11 @@ func DistributionInspect(opt *option.Option) {
 	CMD ["echo", "bar"]
 		`, defaultImage))
 			DeferCleanup(os.RemoveAll, buildContext)
-			// Note: build command kept as CLI since HTTP build API requires sending a tar archive
-			command.Run(opt, "build", "-t", authImageTag, buildContext)
+			httpBuildImage(uClient, version, authImageTag, buildContext)
 		})
 
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 
 		It("should inspect distribution of alpine image", func() {
@@ -156,11 +153,9 @@ func DistributionInspect(opt *option.Option) {
 		})
 
 		It("should inspect an image with registry credentials when logged in", func() {
-			// Note: login/logout commands kept as CLI since there's no HTTP API equivalent
-			command.New(opt, "login", registry, "-u", testUser, "--password-stdin").
-				WithStdin(gbytes.BufferWithBytes([]byte(testPassword))).Run()
+			httpRegistryLogin(uClient, version, registry, testUser, testPassword)
 			DeferCleanup(func() {
-				command.Run(opt, "logout", registry)
+				httpRegistryLogout(registry)
 			})
 			httpPushImage(uClient, version, authImageTag)
 
@@ -194,11 +189,9 @@ func DistributionInspect(opt *option.Option) {
 		})
 
 		It("should fail to inspect an image which needs registry credentials when not logged in", func() {
-			// Note: login/logout commands kept as CLI since there's no HTTP API equivalent
-			command.New(opt, "login", registry, "-u", testUser, "--password-stdin").
-				WithStdin(gbytes.BufferWithBytes([]byte(testPassword))).Run()
+			httpRegistryLogin(uClient, version, registry, testUser, testPassword)
 			httpPushImage(uClient, version, authImageTag)
-			command.Run(opt, "logout", registry)
+			httpRegistryLogout(registry)
 
 			relativeUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/distribution/%s/json", authImageTag))
 			res, err := uClient.Get(relativeUrl)

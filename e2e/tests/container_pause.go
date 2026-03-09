@@ -10,7 +10,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/option"
 
 	"github.com/runfinch/finch-daemon/api/response"
@@ -34,7 +33,7 @@ func ContainerPause(opt *option.Option) {
 		})
 
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 
 		It("should pause a running container", func() {
@@ -46,8 +45,8 @@ func ContainerPause(opt *option.Option) {
 			Expect(res.StatusCode).Should(Equal(http.StatusNoContent))
 
 			// Verify container is paused
-			output := command.StdoutStr(opt, "inspect", "--format", "{{.State.Status}}", testContainerName)
-			Expect(output).Should(Equal("paused"))
+			ctr := httpInspectContainer(uClient, version, testContainerName)
+			Expect(ctr.State.Status).Should(Equal("paused"))
 		})
 
 		It("should fail to pause a non-existent container", func() {
@@ -76,7 +75,7 @@ func ContainerPause(opt *option.Option) {
 			err = json.NewDecoder(res.Body).Decode(&body)
 			Expect(err).Should(BeNil())
 
-			containerShouldExist(opt, testContainerName)
+			containerShouldExist(testContainerName)
 		})
 
 		It("should fail to pause an already paused container", func() {

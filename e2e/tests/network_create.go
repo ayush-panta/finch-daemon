@@ -193,8 +193,8 @@ func NetworkCreate(opt *option.Option, pOpt util.NewOpt) {
 
 				DeferCleanup(cleanupNetworkWithHTTP(testNetwork))
 
-				stdout := command.Stdout(opt, "network", "inspect", testNetwork)
-				Expect(stdout).To(ContainSubstring(`"finch.network.bridge.enable_icc.ipv4": "false"`))
+				network := httpInspectNetwork(uclient, version, testNetwork)
+				Expect(network.Labels).To(HaveKeyWithValue("finch.network.bridge.enable_icc.ipv4", "false"))
 
 				// check iptables rules exists
 				iptOpt, _ := pOpt([]string{"iptables"})
@@ -217,8 +217,8 @@ func NetworkCreate(opt *option.Option, pOpt util.NewOpt) {
 				Expect(response.ID).ShouldNot(BeEmpty())
 				Expect(response.Warning).Should(BeEmpty())
 
-				stdout := command.Stdout(opt, "network", "inspect", testNetwork)
-				Expect(stdout).ShouldNot(ContainSubstring(`"finch.network.bridge.enable_icc.ipv4"`))
+				network := httpInspectNetwork(uclient, version, testNetwork)
+				Expect(network.Labels).ShouldNot(HaveKey("finch.network.bridge.enable_icc.ipv4"))
 
 				// check iptables rules does not exist
 				iptOpt, _ := pOpt([]string{"iptables"})

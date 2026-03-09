@@ -24,10 +24,8 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/ffs"
 	"github.com/runfinch/common-tests/fnet"
-	"github.com/runfinch/common-tests/option"
 
 	"github.com/runfinch/finch-daemon/api/types"
 	"github.com/runfinch/finch-daemon/e2e/client"
@@ -83,13 +81,13 @@ const (
 // and changes defaultImage to be the one pushed to local registry.
 //
 // After all the tests are done, invoke CleanupLocalRegistry to clean up the local registry.
-func SetupLocalRegistry(opt *option.Option) {
-	command.RemoveAll(opt)
+func SetupLocalRegistry() {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
+	httpRemoveAll(uClient, version)
 
 	hostPort := fnet.GetFreePort()
-	containerID := httpRunContainerWithOptions(uClient, version, localRegistryName, types.ContainerCreateRequest{
+	httpRunContainerWithOptions(uClient, version, localRegistryName, types.ContainerCreateRequest{
 		ContainerConfig: types.ContainerConfig{
 			Image: registryImage,
 		},
@@ -99,10 +97,6 @@ func SetupLocalRegistry(opt *option.Option) {
 			},
 		},
 	})
-	imageID := command.StdoutStr(opt, "images", "-q")
-	command.SetLocalRegistryContainerID(containerID)
-	command.SetLocalRegistryImageID(imageID)
-	command.SetLocalRegistryImageName(registryImage)
 
 	httpPullImage(uClient, version, alpineImage)
 	defaultImage = fmt.Sprintf("localhost:%d/alpine:latest", hostPort)
@@ -113,24 +107,23 @@ func SetupLocalRegistry(opt *option.Option) {
 
 // CleanupLocalRegistry removes the local registry container and image. It's used together with SetupLocalRegistry,
 // and should be invoked after running all the tests.
-func CleanupLocalRegistry(opt *option.Option) {
+func CleanupLocalRegistry() {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 
 	// Remove container by name - httpRemoveContainerForce handles the case where container doesn't exist
 	httpRemoveContainerForce(uClient, version, localRegistryName)
 
-	imageIDsOutput := command.StdoutStr(opt, "images", "-q")
-	// Split by newlines and remove each image separately
-	for _, imageID := range strings.Split(imageIDsOutput, "\n") {
-		imageID = strings.TrimSpace(imageID)
-		if imageID != "" {
-			httpRemoveImageForce(uClient, version, imageID)
+	// Remove all images via HTTP API
+	images := httpListImages(uClient, version)
+	for _, img := range images {
+		if img.ID != "" {
+			httpRemoveImageForce(uClient, version, img.ID)
 		}
 	}
 }
 
-func pullImage(opt *option.Option, imageName string) string {
+func pullImage(imageName string) string {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	httpPullImage(uClient, version, imageName)
@@ -146,7 +139,7 @@ func pullImage(opt *option.Option, imageName string) string {
 	return ""
 }
 
-func removeImage(opt *option.Option, imageName string) {
+func removeImage(imageName string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	httpRemoveImageForce(uClient, version, imageName)
@@ -734,7 +727,7 @@ func httpRegistryLogout(registry string) {
 	gomega.Expect(err).Should(gomega.BeNil())
 }
 
-func containerShouldBeRunning(opt *option.Option, containerNames ...string) {
+func containerShouldBeRunning(containerNames ...string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	containers := httpListContainers(uClient, version, false)
@@ -752,7 +745,7 @@ func containerShouldBeRunning(opt *option.Option, containerNames ...string) {
 	}
 }
 
-func containerShouldNotBeRunning(opt *option.Option, containerNames ...string) {
+func containerShouldNotBeRunning(containerNames ...string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	containers := httpListContainers(uClient, version, false)
@@ -770,7 +763,7 @@ func containerShouldNotBeRunning(opt *option.Option, containerNames ...string) {
 	}
 }
 
-func containerShouldExist(opt *option.Option, containerNames ...string) {
+func containerShouldExist(containerNames ...string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	containers := httpListContainers(uClient, version, true)
@@ -788,7 +781,7 @@ func containerShouldExist(opt *option.Option, containerNames ...string) {
 	}
 }
 
-func containerShouldNotExist(opt *option.Option, containerNames ...string) {
+func containerShouldNotExist(containerNames ...string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	containers := httpListContainers(uClient, version, true)
@@ -806,7 +799,7 @@ func containerShouldNotExist(opt *option.Option, containerNames ...string) {
 	}
 }
 
-func imageShouldExist(opt *option.Option, imageName string) {
+func imageShouldExist(imageName string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	images := httpListImages(uClient, version)
@@ -822,7 +815,7 @@ func imageShouldExist(opt *option.Option, imageName string) {
 	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("image %s should exist", imageName))
 }
 
-func imageShouldNotExist(opt *option.Option, imageName string) {
+func imageShouldNotExist(imageName string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	images := httpListImages(uClient, version)
@@ -838,7 +831,7 @@ func imageShouldNotExist(opt *option.Option, imageName string) {
 	gomega.Expect(found).To(gomega.BeFalse(), fmt.Sprintf("image %s should not exist", imageName))
 }
 
-func volumeShouldExist(opt *option.Option, volumeName string) {
+func volumeShouldExist(volumeName string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	vols := httpListVolumes(uClient, version)
@@ -852,7 +845,7 @@ func volumeShouldExist(opt *option.Option, volumeName string) {
 	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("volume %s should exist", volumeName))
 }
 
-func volumeShouldNotExist(opt *option.Option, volumeName string) {
+func volumeShouldNotExist(volumeName string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	vols := httpListVolumes(uClient, version)
@@ -877,7 +870,7 @@ func fileShouldNotExist(path string) {
 	gomega.Expect(path).ToNot(gomega.BeAnExistingFile())
 }
 
-func fileShouldExistInContainer(opt *option.Option, containerName, path, content string) {
+func fileShouldExistInContainer(containerName, path, content string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	output := httpExecContainer(uClient, version, containerName, []string{"cat", path})
@@ -885,7 +878,7 @@ func fileShouldExistInContainer(opt *option.Option, containerName, path, content
 }
 
 //nolint:unused // reserved for future use cases
-func fileShouldNotExistInContainer(opt *option.Option, containerName, path string) {
+func fileShouldNotExistInContainer(containerName, path string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	_, exitCode := httpExecContainerWithExitCode(uClient, version, containerName, []string{"cat", path})
@@ -893,7 +886,7 @@ func fileShouldNotExistInContainer(opt *option.Option, containerName, path strin
 }
 
 //nolint:unused // reserved for future use cases
-func buildImage(opt *option.Option, imageName string) {
+func buildImage(imageName string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	dockerfile := fmt.Sprintf(`FROM %s
@@ -902,6 +895,14 @@ func buildImage(opt *option.Option, imageName string) {
 	buildContext := ffs.CreateBuildContext(dockerfile)
 	ginkgo.DeferCleanup(os.RemoveAll, buildContext)
 	httpBuildImage(uClient, version, imageName, buildContext)
+}
+
+// RemoveAll removes all containers, images, volumes, and non-default networks via HTTP API.
+// Exported for use by the test suite setup/teardown in e2e_test.go.
+func RemoveAll() {
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
+	httpRemoveAll(uClient, version)
 }
 
 func GetDockerHostUrl() string {

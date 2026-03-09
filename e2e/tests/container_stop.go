@@ -11,7 +11,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/option"
 
 	"github.com/runfinch/finch-daemon/api/response"
@@ -35,18 +34,18 @@ func ContainerStop(opt *option.Option) {
 			apiUrl = client.ConvertToFinchUrl(version, relativeUrl)
 		})
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 
 		It("should stop the container", func() {
 			// start a container that keeps running
 			httpRunContainer(uClient, version, testContainerName, defaultImage, []string{"sleep", "infinity"})
-			containerShouldBeRunning(opt, testContainerName)
+			containerShouldBeRunning(testContainerName)
 
 			res, err := uClient.Post(apiUrl, "application/json", nil)
 			Expect(err).Should(BeNil())
 			Expect(res.StatusCode).Should(Equal(http.StatusNoContent))
-			containerShouldNotBeRunning(opt, testContainerName)
+			containerShouldNotBeRunning(testContainerName)
 		})
 		It("should fail to stop a stopped container", func() {
 			// start a container that exits as soon as starts
@@ -70,7 +69,7 @@ func ContainerStop(opt *option.Option) {
 		It("should stop the container with timeout", func() {
 			// start a container that keeps running
 			httpRunContainer(uClient, version, testContainerName, defaultImage, []string{"sleep", "infinity"})
-			containerShouldBeRunning(opt, testContainerName)
+			containerShouldBeRunning(testContainerName)
 
 			// stop the container with a timeout of 10 seconds
 			now := time.Now()
@@ -87,7 +86,7 @@ func ContainerStop(opt *option.Option) {
 			// Start a container that only logs the signal it receives
 			httpRunContainer(uClient, version, testContainerName, defaultImage,
 				[]string{"sh", "-c", `trap 'echo "Received signal: SIGINT"' SIGINT; while true; do sleep 1; done`})
-			containerShouldBeRunning(opt, testContainerName)
+			containerShouldBeRunning(testContainerName)
 
 			// Stop the container with SIGINT signal
 			relativeUrl := fmt.Sprintf("/containers/%s/stop?signal=SIGINT", testContainerName)
@@ -98,7 +97,7 @@ func ContainerStop(opt *option.Option) {
 			Expect(res.StatusCode).Should(Equal(http.StatusNoContent))
 
 			// Verify container is stopped by the API
-			containerShouldNotBeRunning(opt, testContainerName)
+			containerShouldNotBeRunning(testContainerName)
 
 			logs := httpContainerLogs(uClient, version, testContainerName)
 			Expect(logs).Should(ContainSubstring("Received signal: SIGINT"))

@@ -10,7 +10,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/option"
 
 	"github.com/runfinch/finch-daemon/api/types"
@@ -31,7 +30,7 @@ func NetworkList(opt *option.Option) {
 			version = GetDockerApiVersion()
 		})
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 		It("should return bridge network by default", func() {
 			relativeUrl := client.ConvertToFinchUrl(version, "/networks")

@@ -17,7 +17,6 @@ import (
 	"github.com/docker/go-connections/nat"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/onsi/gomega/gbytes"
 	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/ffs"
 	"github.com/runfinch/common-tests/fnet"
@@ -45,9 +44,9 @@ func CredentialHelper(opt *option.Option, pOpt func([]string, ...option.Modifier
 		)
 
 		BeforeEach(func() {
-			command.RemoveAll(opt)
 			uClient = client.NewClient(GetDockerHostUrl())
 			version = GetDockerApiVersion()
+			httpRemoveAll(uClient, version)
 		})
 
 		BeforeEach(func() {
@@ -86,21 +85,18 @@ func CredentialHelper(opt *option.Option, pOpt func([]string, ...option.Modifier
 		`, defaultImage))
 			DeferCleanup(os.RemoveAll, buildContext)
 
-			// Note: build command kept as CLI since HTTP build requires tar context
-			command.Run(opt, "build", "-t", authImageTag, buildContext)
+			httpBuildImage(uClient, version, authImageTag, buildContext)
 
-			// Note: login/logout commands kept as CLI since there's no HTTP API equivalent
-			command.New(opt, "login", registry, "-u", testUser, "--password-stdin").
-				WithStdin(gbytes.BufferWithBytes([]byte(testPassword))).Run()
+			httpRegistryLogin(uClient, version, registry, testUser, testPassword)
 			DeferCleanup(func() {
-				command.Run(opt, "logout", registry)
+				httpRegistryLogout(registry)
 			})
 			httpPushImage(uClient, version, authImageTag)
 			httpRemoveImage(uClient, version, authImageTag)
 		})
 
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 
 		It("should successfully build with registry credentials via API", func() {
@@ -145,7 +141,7 @@ func CredentialHelper(opt *option.Option, pOpt func([]string, ...option.Modifier
 			Expect(res).To(HaveHTTPStatus(http.StatusOK))
 			Expect(string(respBody)).ShouldNot(ContainSubstring("error"))
 
-			imageShouldExist(opt, resultTag)
+			imageShouldExist(resultTag)
 		})
 
 		It("should fail to build without registry credentials", func() {
@@ -179,7 +175,7 @@ func CredentialHelper(opt *option.Option, pOpt func([]string, ...option.Modifier
 			Expect(string(respBody)).Should(ContainSubstring(""))
 
 			// Verify image was not built
-			imageShouldNotExist(opt, resultTag)
+			imageShouldNotExist(resultTag)
 		})
 
 		It("should prevent credential sharing between parallel builds", func() {
@@ -259,14 +255,14 @@ func CredentialHelper(opt *option.Option, pOpt func([]string, ...option.Modifier
 
 			Expect(quickRes).To(HaveHTTPStatus(http.StatusInternalServerError))
 			Expect(string(quickRespBody)).Should(ContainSubstring(""))
-			imageShouldNotExist(opt, quickResultTag)
+			imageShouldNotExist(quickResultTag)
 
 			<-slowDone
 			Expect(slowErr).Should(BeNil())
 			Expect(slowRes).To(HaveHTTPStatus(http.StatusOK))
 			Expect(string(slowRespBody)).ShouldNot(ContainSubstring("error"))
 
-			imageShouldExist(opt, slowResultTag)
+			imageShouldExist(slowResultTag)
 		})
 
 		It("should return unauthorized error when requesting credentials from another parent process", func() {
@@ -350,7 +346,7 @@ func CredentialHelper(opt *option.Option, pOpt func([]string, ...option.Modifier
 			Expect(string(respBody)).ShouldNot(ContainSubstring("error"))
 
 			// Verify the image was built successfully
-			imageShouldExist(opt, resultTag)
+			imageShouldExist(resultTag)
 		})
 	})
 }

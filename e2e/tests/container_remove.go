@@ -10,7 +10,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/option"
 
 	"github.com/runfinch/finch-daemon/api/response"
@@ -35,7 +34,7 @@ func ContainerRemove(opt *option.Option) {
 			apiUrl = client.ConvertToFinchUrl(version, relativeUrl)
 		})
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 
 		It("should remove the container", func() {
@@ -46,7 +45,7 @@ func ContainerRemove(opt *option.Option) {
 			res, err := uClient.Post(apiUrl, "application/json", nil)
 			Expect(err).Should(BeNil())
 			Expect(res.StatusCode).Should(Equal(http.StatusNoContent))
-			containerShouldNotExist(opt, testContainerName)
+			containerShouldNotExist(testContainerName)
 		})
 		It("should fail to remove a running container", func() {
 			// start a container that keeps running
@@ -54,7 +53,7 @@ func ContainerRemove(opt *option.Option) {
 			res, err := uClient.Post(apiUrl, "application/json", nil)
 			Expect(err).Should(BeNil())
 			Expect(res.StatusCode).Should(Equal(http.StatusConflict))
-			containerShouldExist(opt, testContainerName)
+			containerShouldExist(testContainerName)
 		})
 		It("should successfully remove a running container with force=true", func() {
 			// start a container that keeps running
@@ -65,7 +64,7 @@ func ContainerRemove(opt *option.Option) {
 			res, err := uClient.Post(apiUrl, "application/json", nil)
 			Expect(err).Should(BeNil())
 			Expect(res.StatusCode).Should(Equal(http.StatusNoContent))
-			containerShouldNotExist(opt, testContainerName)
+			containerShouldNotExist(testContainerName)
 		})
 		It("should successfully remove a volume associated with it", func() {
 			// start a container with a volume
@@ -79,14 +78,14 @@ func ContainerRemove(opt *option.Option) {
 			})
 			httpWaitContainer(uClient, version, testContainerName)
 			// get the total number of volumes after creating the new volume
-			totalVolumes := len(command.GetAllVolumeNames(opt))
+			totalVolumes := len(httpListVolumes(uClient, version).Volumes)
 			relativeUrl := fmt.Sprintf("/containers/%s/remove?v=true", testContainerName)
 			apiUrl = client.ConvertToFinchUrl(version, relativeUrl)
 			res, err := uClient.Post(apiUrl, "application/json", nil)
 			Expect(err).Should(BeNil())
 			Expect(res.StatusCode).Should(Equal(http.StatusNoContent))
-			containerShouldNotExist(opt, testContainerName)
-			vCountAfterRemove := len(command.GetAllVolumeNames(opt))
+			containerShouldNotExist(testContainerName)
+			vCountAfterRemove := len(httpListVolumes(uClient, version).Volumes)
 			Expect(vCountAfterRemove).Should(Equal(totalVolumes - 1))
 		})
 		It("should fail to remove a container that does not exist", func() {

@@ -10,7 +10,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/option"
 
 	"github.com/runfinch/finch-daemon/e2e/client"
@@ -24,14 +23,14 @@ func ImagePull(opt *option.Option) {
 			version string
 		)
 		BeforeEach(func() {
-			command.RemoveImages(opt)
 			// create a custom client to use http over unix sockets
 			uClient = client.NewClient(GetDockerHostUrl())
 			// get the docker api version that will be tested
 			version = GetDockerApiVersion()
+			httpRemoveAllImages(uClient, version)
 		})
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 
 		It("should pull the default image successfully", func() {
@@ -42,7 +41,7 @@ func ImagePull(opt *option.Option) {
 			Expect(err).Should(BeNil())
 			Expect(resp.StatusCode).Should(Equal(http.StatusOK))
 			waitForResponse(resp)
-			imageShouldExist(opt, defaultImage)
+			imageShouldExist(defaultImage)
 		})
 		It("should do nothing if image already exists", func() {
 			httpPullImage(uClient, version, defaultImage)
@@ -53,7 +52,7 @@ func ImagePull(opt *option.Option) {
 			Expect(err).Should(BeNil())
 			Expect(resp.StatusCode).Should(Equal(http.StatusOK))
 			waitForResponse(resp)
-			imageShouldExist(opt, defaultImage)
+			imageShouldExist(defaultImage)
 		})
 		It("should fail to pull a non-existent image", func() {
 			relativeUrl := fmt.Sprintf("/images/create?fromImage=%s", nonexistentImageName)
@@ -63,7 +62,7 @@ func ImagePull(opt *option.Option) {
 			Expect(err).Should(BeNil())
 			Expect(resp.StatusCode).Should(Equal(http.StatusNotFound))
 			waitForResponse(resp)
-			imageShouldNotExist(opt, nonexistentImageName)
+			imageShouldNotExist(nonexistentImageName)
 		})
 		It("should pull the alpine image using the specified image tag", func() {
 			imageName, imageTag, _ := strings.Cut(olderAlpineImage, ":")
@@ -74,8 +73,8 @@ func ImagePull(opt *option.Option) {
 			Expect(err).Should(BeNil())
 			Expect(resp.StatusCode).Should(Equal(http.StatusOK))
 			waitForResponse(resp)
-			imageShouldExist(opt, olderAlpineImage)
-			imageShouldNotExist(opt, alpineImage)
+			imageShouldExist(olderAlpineImage)
+			imageShouldNotExist(alpineImage)
 		})
 		It("should fail to pull an image with a malformed image name", func() {
 			malformedImage := "alpine:image:latest"
@@ -97,7 +96,7 @@ func ImagePull(opt *option.Option) {
 			Expect(err).Should(BeNil())
 			Expect(resp.StatusCode).Should(Equal(http.StatusBadRequest))
 			waitForResponse(resp)
-			imageShouldNotExist(opt, imageName)
+			imageShouldNotExist(imageName)
 		})
 		It("should pull the alpine image with the specified platform", func() {
 			platform := "linux/arm64"
@@ -108,7 +107,7 @@ func ImagePull(opt *option.Option) {
 			Expect(err).Should(BeNil())
 			Expect(resp.StatusCode).Should(Equal(http.StatusOK))
 			waitForResponse(resp)
-			imageShouldExist(opt, alpineImage)
+			imageShouldExist(alpineImage)
 		})
 		It("should fail to pull an image with invalid platform", func() {
 			platform := "invalid"
@@ -119,7 +118,7 @@ func ImagePull(opt *option.Option) {
 			Expect(err).Should(BeNil())
 			Expect(resp.StatusCode).Should(Equal(http.StatusInternalServerError))
 			waitForResponse(resp)
-			imageShouldNotExist(opt, alpineImage)
+			imageShouldNotExist(alpineImage)
 		})
 	})
 }

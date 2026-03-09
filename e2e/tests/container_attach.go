@@ -11,7 +11,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/option"
 
 	"github.com/runfinch/finch-daemon/e2e/client"
@@ -34,7 +33,7 @@ func ContainerAttach(opt *option.Option) {
 				[]string{"/bin/sh", "-c", `for VAR in 1 2 3; do echo $VAR; done; sleep infinity`})
 		})
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 		It("should return a 404 status if the container is not found", func() {
 			// create url and options

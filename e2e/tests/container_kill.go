@@ -11,7 +11,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/runfinch/common-tests/command"
 	"github.com/runfinch/common-tests/option"
 
 	"github.com/runfinch/finch-daemon/api/response"
@@ -33,7 +32,7 @@ func ContainerKill(opt *option.Option) {
 			apiUrl = client.ConvertToFinchUrl(version, relativeUrl)
 		})
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 		It("should kill the container with default SIGKILL", func() {
 			// start a container that keeps running
@@ -41,7 +40,7 @@ func ContainerKill(opt *option.Option) {
 			res, err := uClient.Post(apiUrl, "application/json", nil)
 			Expect(err).Should(BeNil())
 			Expect(res.StatusCode).Should(Equal(http.StatusNoContent))
-			containerShouldNotBeRunning(opt, testContainerName)
+			containerShouldNotBeRunning(testContainerName)
 		})
 		It("should fail to kill a non-existent container", func() {
 			res, err := uClient.Post(apiUrl, "application/json", nil)
@@ -64,7 +63,7 @@ func ContainerKill(opt *option.Option) {
 			var body response.Error
 			err = json.NewDecoder(res.Body).Decode(&body)
 			Expect(err).Should(BeNil())
-			containerShouldExist(opt, testContainerName)
+			containerShouldExist(testContainerName)
 		})
 		It("should kill the container with SIGINT", func() {
 			relativeUrl := fmt.Sprintf("/containers/%s/kill?signal=SIGINT", testContainerName)
@@ -76,7 +75,7 @@ func ContainerKill(opt *option.Option) {
 			Expect(res.StatusCode).Should(Equal(http.StatusNoContent))
 			// This is an async operation as a result we need to wait for the container to exit gracefully before checking the status
 			time.Sleep(1 * time.Second)
-			containerShouldNotBeRunning(opt, testContainerName)
+			containerShouldNotBeRunning(testContainerName)
 		})
 		It("should not kill the container and throw error on unrecognized signal", func() {
 			relativeUrl := fmt.Sprintf("/containers/%s/kill?signal=SIGRAND", testContainerName)
@@ -85,8 +84,8 @@ func ContainerKill(opt *option.Option) {
 			res, err := uClient.Post(apiUrl, "application/json", nil)
 			Expect(err).Should(BeNil())
 			Expect(res.StatusCode).Should(Equal(http.StatusInternalServerError))
-			containerShouldExist(opt, testContainerName)
-			containerShouldBeRunning(opt, testContainerName)
+			containerShouldExist(testContainerName)
+			containerShouldBeRunning(testContainerName)
 		})
 	})
 }
