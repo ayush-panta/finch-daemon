@@ -254,7 +254,7 @@ func ContainerStats(opt *option.Option) {
 				},
 			})
 			// Connect to second network via API
-			connectUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/networks/net2/connect"))
+			connectUrl := client.ConvertToFinchUrl(version, "/networks/net2/connect")
 			connectBody, _ := json.Marshal(map[string]string{"Container": cid})
 			connectResp, connectErr := uClient.Post(connectUrl, "application/json", bytes.NewReader(connectBody))
 			Expect(connectErr).Should(BeNil())

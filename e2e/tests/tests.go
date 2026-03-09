@@ -87,7 +87,7 @@ func SetupLocalRegistry() {
 	httpRemoveAll(uClient, version)
 
 	hostPort := fnet.GetFreePort()
-	httpRunContainerWithOptions(uClient, version, localRegistryName, types.ContainerCreateRequest{
+	options := types.ContainerCreateRequest{
 		ContainerConfig: types.ContainerConfig{
 			Image: registryImage,
 		},
@@ -96,13 +96,41 @@ func SetupLocalRegistry() {
 				"5000/tcp": []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: fmt.Sprintf("%d", hostPort)}},
 			},
 		},
-	})
+	}
+
+	// Try to create the registry container — skip registry setup if OPA blocks container create.
+	containerID, ok := httpTryCreateContainer(uClient, version, localRegistryName, options)
+	if !ok {
+		return
+	}
+	httpStartContainer(uClient, version, containerID)
 
 	httpPullImage(uClient, version, alpineImage)
 	defaultImage = fmt.Sprintf("localhost:%d/alpine:latest", hostPort)
 	httpTagImage(uClient, version, alpineImage, defaultImage)
 	httpPushImage(uClient, version, defaultImage)
 	httpRemoveImage(uClient, version, alpineImage)
+}
+
+// httpTryCreateContainer attempts to create a container and returns (id, true) on success,
+// or ("", false) if the request is forbidden (e.g. OPA middleware blocks container create).
+func httpTryCreateContainer(uClient *http.Client, version, containerName string, options types.ContainerCreateRequest) (string, bool) {
+	url := client.ConvertToFinchUrl(version, fmt.Sprintf("/containers/create?name=%s", containerName))
+	reqBody, err := json.Marshal(options)
+	gomega.Expect(err).Should(gomega.BeNil())
+	resp, err := uClient.Post(url, "application/json", bytes.NewReader(reqBody))
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden {
+		return "", false
+	}
+	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusCreated))
+	var ctr struct {
+		ID string `json:"Id"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&ctr)
+	gomega.Expect(err).Should(gomega.BeNil())
+	return ctr.ID, true
 }
 
 // CleanupLocalRegistry removes the local registry container and image. It's used together with SetupLocalRegistry,
@@ -496,11 +524,16 @@ func httpListVolumes(uClient *http.Client, version string) types.VolumesListResp
 }
 
 // httpListNetworks lists networks using the HTTP API.
+// Returns an empty slice if the request is forbidden (e.g. OPA middleware blocks GET /networks).
 func httpListNetworks(uClient *http.Client, version string) []*types.NetworkInspectResponse {
 	url := client.ConvertToFinchUrl(version, "/networks")
 	resp, err := uClient.Get(url)
 	gomega.Expect(err).Should(gomega.BeNil())
 	defer resp.Body.Close()
+	// OPA policy may block GET /networks with 403 — treat as empty list for cleanup purposes
+	if resp.StatusCode == http.StatusForbidden {
+		return nil
+	}
 	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusOK))
 	var networks []*types.NetworkInspectResponse
 	err = json.NewDecoder(resp.Body).Decode(&networks)
