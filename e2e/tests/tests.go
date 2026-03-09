@@ -134,17 +134,28 @@ func pullImage(opt *option.Option, imageName string) string {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	httpPullImage(uClient, version, imageName)
-	imageID := command.Stdout(opt, "images", "--quiet", imageName)
-	gomega.Expect(imageID).ShouldNot(gomega.BeEmpty())
-	return strings.TrimSpace(string(imageID))
+	images := httpListImages(uClient, version)
+	for _, img := range images {
+		for _, tag := range img.RepoTags {
+			if tag == imageName {
+				return img.ID
+			}
+		}
+	}
+	gomega.Expect(false).To(gomega.BeTrue(), fmt.Sprintf("pulled image %s not found", imageName))
+	return ""
 }
 
 func removeImage(opt *option.Option, imageName string) {
 	uClient := client.NewClient(GetDockerHostUrl())
 	version := GetDockerApiVersion()
 	httpRemoveImageForce(uClient, version, imageName)
-	imageID := command.Stdout(opt, "images", "--quiet", imageName)
-	gomega.Expect(string(imageID)).Should(gomega.BeEmpty())
+	images := httpListImages(uClient, version)
+	for _, img := range images {
+		for _, tag := range img.RepoTags {
+			gomega.Expect(tag).NotTo(gomega.Equal(imageName))
+		}
+	}
 }
 
 // Helper functions for HTTP API calls to replace command.Run usage
@@ -724,49 +735,135 @@ func httpRegistryLogout(registry string) {
 }
 
 func containerShouldBeRunning(opt *option.Option, containerNames ...string) {
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
+	containers := httpListContainers(uClient, version, false)
 	for _, containerName := range containerNames {
-		gomega.Expect(command.Stdout(opt, "ps", "-q", "--filter",
-			fmt.Sprintf("name=%s", containerName))).NotTo(gomega.BeEmpty())
+		found := false
+		for _, c := range containers {
+			for _, name := range c.Names {
+				if name == containerName || name == "/"+containerName {
+					found = true
+					break
+				}
+			}
+		}
+		gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("container %s should be running", containerName))
 	}
 }
 
 func containerShouldNotBeRunning(opt *option.Option, containerNames ...string) {
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
+	containers := httpListContainers(uClient, version, false)
 	for _, containerName := range containerNames {
-		gomega.Expect(command.Stdout(opt, "ps", "-q", "--filter",
-			fmt.Sprintf("name=%s", containerName))).To(gomega.BeEmpty())
+		found := false
+		for _, c := range containers {
+			for _, name := range c.Names {
+				if name == containerName || name == "/"+containerName {
+					found = true
+					break
+				}
+			}
+		}
+		gomega.Expect(found).To(gomega.BeFalse(), fmt.Sprintf("container %s should not be running", containerName))
 	}
 }
 
 func containerShouldExist(opt *option.Option, containerNames ...string) {
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
+	containers := httpListContainers(uClient, version, true)
 	for _, containerName := range containerNames {
-		gomega.Expect(command.Stdout(opt, "ps", "-a", "-q", "--filter",
-			fmt.Sprintf("name=%s", containerName))).NotTo(gomega.BeEmpty())
+		found := false
+		for _, c := range containers {
+			for _, name := range c.Names {
+				if name == containerName || name == "/"+containerName {
+					found = true
+					break
+				}
+			}
+		}
+		gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("container %s should exist", containerName))
 	}
 }
 
 func containerShouldNotExist(opt *option.Option, containerNames ...string) {
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
+	containers := httpListContainers(uClient, version, true)
 	for _, containerName := range containerNames {
-		gomega.Expect(command.Stdout(opt, "ps", "-a", "-q", "--filter",
-			fmt.Sprintf("name=%s", containerName))).To(gomega.BeEmpty())
+		found := false
+		for _, c := range containers {
+			for _, name := range c.Names {
+				if name == containerName || name == "/"+containerName {
+					found = true
+					break
+				}
+			}
+		}
+		gomega.Expect(found).To(gomega.BeFalse(), fmt.Sprintf("container %s should not exist", containerName))
 	}
 }
 
 func imageShouldExist(opt *option.Option, imageName string) {
-	gomega.Expect(command.Stdout(opt, "images", "-q", imageName)).NotTo(gomega.BeEmpty())
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
+	images := httpListImages(uClient, version)
+	found := false
+	for _, img := range images {
+		for _, tag := range img.RepoTags {
+			if tag == imageName {
+				found = true
+				break
+			}
+		}
+	}
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("image %s should exist", imageName))
 }
 
 func imageShouldNotExist(opt *option.Option, imageName string) {
-	gomega.Expect(command.Stdout(opt, "images", "-q", imageName)).To(gomega.BeEmpty())
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
+	images := httpListImages(uClient, version)
+	found := false
+	for _, img := range images {
+		for _, tag := range img.RepoTags {
+			if tag == imageName {
+				found = true
+				break
+			}
+		}
+	}
+	gomega.Expect(found).To(gomega.BeFalse(), fmt.Sprintf("image %s should not exist", imageName))
 }
 
 func volumeShouldExist(opt *option.Option, volumeName string) {
-	gomega.Expect(command.Stdout(opt, "volume", "ls", "-q", "--filter",
-		fmt.Sprintf("name=%s", volumeName))).NotTo(gomega.BeEmpty())
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
+	vols := httpListVolumes(uClient, version)
+	found := false
+	for _, v := range vols.Volumes {
+		if v.Name == volumeName {
+			found = true
+			break
+		}
+	}
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("volume %s should exist", volumeName))
 }
 
 func volumeShouldNotExist(opt *option.Option, volumeName string) {
-	gomega.Expect(command.Stdout(opt, "volume", "ls", "-q", "--filter",
-		fmt.Sprintf("name=%s", volumeName))).To(gomega.BeEmpty())
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
+	vols := httpListVolumes(uClient, version)
+	found := false
+	for _, v := range vols.Volumes {
+		if v.Name == volumeName {
+			found = true
+			break
+		}
+	}
+	gomega.Expect(found).To(gomega.BeFalse(), fmt.Sprintf("volume %s should not exist", volumeName))
 }
 
 func fileShouldExist(path, content string) {
@@ -781,27 +878,30 @@ func fileShouldNotExist(path string) {
 }
 
 func fileShouldExistInContainer(opt *option.Option, containerName, path, content string) {
-	gomega.Expect(command.StdoutStr(opt, "exec", containerName, "cat", path)).To(gomega.Equal(content))
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
+	output := httpExecContainer(uClient, version, containerName, []string{"cat", path})
+	gomega.Expect(strings.TrimSpace(output)).To(gomega.Equal(content))
 }
 
 //nolint:unused // reserved for future use cases
 func fileShouldNotExistInContainer(opt *option.Option, containerName, path string) {
-	cmdOut := command.RunWithoutSuccessfulExit(opt, "exec", containerName, "cat", path)
-	gomega.Expect(cmdOut.Err.Contents()).To(gomega.ContainSubstring("No such file or directory"))
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
+	_, exitCode := httpExecContainerWithExitCode(uClient, version, containerName, []string{"cat", path})
+	gomega.Expect(exitCode).NotTo(gomega.Equal(0))
 }
 
-// Note: buildImage uses command.Run for the build command since Docker build API
-// requires sending a tar archive which is complex to implement via HTTP.
-// This is intentionally kept as CLI command for simplicity.
-//
 //nolint:unused // reserved for future use cases
 func buildImage(opt *option.Option, imageName string) {
+	uClient := client.NewClient(GetDockerHostUrl())
+	version := GetDockerApiVersion()
 	dockerfile := fmt.Sprintf(`FROM %s
 		CMD ["echo", "finch-test-dummy-output"]
 		`, defaultImage)
 	buildContext := ffs.CreateBuildContext(dockerfile)
 	ginkgo.DeferCleanup(os.RemoveAll, buildContext)
-	command.Run(opt, "build", "-q", "-t", imageName, buildContext)
+	httpBuildImage(uClient, version, imageName, buildContext)
 }
 
 func GetDockerHostUrl() string {
