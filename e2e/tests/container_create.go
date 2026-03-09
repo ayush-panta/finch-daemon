@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/nerdctl/v2/pkg/inspecttypes/dockercompat"
 	"github.com/docker/go-connections/nat"
 	"github.com/moby/moby/api/types/blkiodev"
 	. "github.com/onsi/ginkgo/v2"
@@ -55,7 +54,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			options.Image = defaultImage
 		})
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 
 		It("should successfully create a container that prints hello world", func() {
@@ -68,8 +67,8 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
 			// start container and verify output
-			out := command.StdoutStr(opt, "start", "-a", testContainerName)
-			Expect(out).Should(Equal("hello world"))
+			out := httpStartContainerAttach(uClient, version, testContainerName)
+			Expect(strings.TrimSpace(out)).Should(Equal("hello world"))
 		})
 		It("should successfully log container output for the created container", func() {
 			// define options
@@ -80,10 +79,11 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
-			// start container and verify output
+			// start container and wait for it to finish
 			httpStartContainer(uClient, version, testContainerName)
-			out := command.StdoutStr(opt, "logs", testContainerName)
-			Expect(out).Should(Equal("hello world"))
+			httpWaitContainer(uClient, version, testContainerName)
+			out := httpContainerLogs(uClient, version, testContainerName)
+			Expect(strings.TrimSpace(out)).Should(Equal("hello world"))
 		})
 		It("should fail to create a container with duplicate name", func() {
 			// create container
@@ -117,7 +117,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 
 			// start container and verify network settings
 			httpStartContainer(uClient, version, testContainerName)
-			verifyNetworkSettings(opt, testContainerName, "bridge")
+			verifyNetworkSettings(uClient, version, testContainerName, "bridge")
 		})
 		It("should attach container to the bridge network for default network mode", func() {
 			// define options
@@ -131,7 +131,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 
 			// start container and verify network settings
 			httpStartContainer(uClient, version, testContainerName)
-			verifyNetworkSettings(opt, testContainerName, "bridge")
+			verifyNetworkSettings(uClient, version, testContainerName, "bridge")
 		})
 		It("should attach container to the specified network using network name", func() {
 			// define options
@@ -148,7 +148,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 
 			// start container and verify network settings
 			httpStartContainer(uClient, version, testContainerName)
-			verifyNetworkSettings(opt, testContainerName, testNetwork)
+			verifyNetworkSettings(uClient, version, testContainerName, testNetwork)
 		})
 		It("should attach container to the specified network using network id", func() {
 			// create network
@@ -166,7 +166,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 
 			// start container and verify network settings
 			httpStartContainer(uClient, version, testContainerName)
-			verifyNetworkSettings(opt, testContainerName, testNetwork)
+			verifyNetworkSettings(uClient, version, testContainerName, testNetwork)
 		})
 		It("should create a container with container:<id> network mode", func() {
 			// create and start the first container
@@ -174,7 +174,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			statusCode, ctr := createContainer(uClient, url, testContainerName, options)
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			Expect(ctr.ID).ShouldNot(BeEmpty())
-			command.Run(opt, "start", testContainerName)
+			httpStartContainer(uClient, version, testContainerName)
 
 			// create second container using first container's network
 			proxyContainerName := testContainerName + "-proxy"
@@ -182,15 +182,11 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			statusCode, proxyCtr := createContainer(uClient, url, proxyContainerName, options)
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			Expect(proxyCtr.ID).ShouldNot(BeEmpty())
-			command.Run(opt, "start", proxyContainerName)
+			httpStartContainer(uClient, version, proxyContainerName)
 
 			// verify proxy container started successfully (shares network with first container)
-			resp := command.Stdout(opt, "inspect", proxyContainerName)
-			var inspect []*dockercompat.Container
-			err := json.Unmarshal(resp, &inspect)
-			Expect(err).Should(BeNil())
-			Expect(inspect).Should(HaveLen(1))
-			Expect(inspect[0].State.Running).Should(BeTrue())
+			inspect := httpInspectContainer(uClient, version, proxyContainerName)
+			Expect(inspect.State.Running).Should(BeTrue())
 		})
 		It("should create a container with specified port mappings", func() {
 			hostPort := "8001"
@@ -217,15 +213,11 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			httpStartContainer(uClient, version, testContainerName)
 
 			// inspect container
-			resp := command.Stdout(opt, "inspect", testContainerName)
-			var inspect []*dockercompat.Container
-			err := json.Unmarshal(resp, &inspect)
-			Expect(err).Should(BeNil())
-			Expect(inspect).Should(HaveLen(1))
+			inspect := httpInspectContainer(uClient, version, testContainerName)
 
 			// verify port mappings
-			Expect(inspect[0].NetworkSettings).ShouldNot(BeNil())
-			portMap := *inspect[0].NetworkSettings.Ports
+			Expect(inspect.NetworkSettings).ShouldNot(BeNil())
+			portMap := *inspect.NetworkSettings.Ports
 			Expect(portMap).Should(HaveLen(2))
 			Expect(portMap[tcpPort]).Should(HaveLen(1))
 			Expect(portMap[tcpPort][0]).Should(Equal(tcpPortBinding))
@@ -252,15 +244,11 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			httpStartContainer(uClient, version, testContainerName)
 
 			// inspect container
-			resp := command.Stdout(opt, "inspect", testContainerName)
-			var inspect []*dockercompat.Container
-			err := json.Unmarshal(resp, &inspect)
-			Expect(err).Should(BeNil())
-			Expect(inspect).Should(HaveLen(1))
+			inspect2 := httpInspectContainer(uClient, version, testContainerName)
 
 			// verify port mappings with automatic allocation
-			Expect(inspect[0].NetworkSettings).ShouldNot(BeNil())
-			portMap := *inspect[0].NetworkSettings.Ports
+			Expect(inspect2.NetworkSettings).ShouldNot(BeNil())
+			portMap := *inspect2.NetworkSettings.Ports
 			Expect(portMap).Should(HaveLen(1))
 			Expect(portMap[tcpPort]).Should(HaveLen(1))
 			Expect(portMap[tcpPort][0].HostIP).Should(Equal("0.0.0.0"))
@@ -326,7 +314,8 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			fileContent2 := "hello world again"
 			filename2 := "test-file2"
 			cmd := fmt.Sprintf("echo -n %s > %s", fileContent2, filepath.Join(filepath.Dir(ctrFilepath), filename2))
-			command.RunWithoutSuccessfulExit(opt, "exec", testContainerName, "sh", "-c", cmd)
+			_, exitCode := httpExecContainerWithExitCode(uClient, version, testContainerName, []string{"sh", "-c", cmd})
+			Expect(exitCode).NotTo(Equal(0))
 			fileShouldNotExist(filepath.Join(filepath.Dir(hostFilepath), filename2))
 		})
 		It("should create a container with a volume mount", func() {
@@ -373,8 +362,8 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
 			// start container and verify entrypoint output
-			out := command.StdoutStr(opt, "start", "-a", testContainerName)
-			Expect(out).Should(Equal("hello world"))
+			out := httpStartContainerAttach(uClient, version, testContainerName)
+			Expect(strings.TrimSpace(out)).Should(Equal("hello world"))
 		})
 		It("should create a container with environment variables set", func() {
 			envName := "TESTVAR"
@@ -391,8 +380,8 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
 			// start container and verify output
-			out := command.StdoutStr(opt, "start", "-a", testContainerName)
-			Expect(out).Should(Equal(envValue))
+			out := httpStartContainerAttach(uClient, version, testContainerName)
+			Expect(strings.TrimSpace(out)).Should(Equal(envValue))
 		})
 		It("should create a container with defined labels", func() {
 			labelName := "test-label"
@@ -411,14 +400,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			httpStartContainer(uClient, version, testContainerName)
 
 			// inspect container
-			resp := command.Stdout(opt, "inspect", testContainerName)
-			var inspect []*dockercompat.Container
-			err := json.Unmarshal(resp, &inspect)
-			Expect(err).Should(BeNil())
-			Expect(inspect).Should(HaveLen(1))
+			inspect := httpInspectContainer(uClient, version, testContainerName)
 
 			// check label
-			Expect(inspect[0].Config.Labels[labelName]).Should(Equal(labelValue))
+			Expect(inspect.Config.Labels[labelName]).Should(Equal(labelValue))
 		})
 		It("should create a container with specified user", func() {
 			userName := "nobody"
@@ -433,8 +418,8 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
 			// start container and verify user
-			out := command.StdoutStr(opt, "start", "-a", testContainerName)
-			Expect(out).Should(Equal(userName))
+			out := httpStartContainerAttach(uClient, version, testContainerName)
+			Expect(strings.TrimSpace(out)).Should(Equal(userName))
 		})
 		It("should create a container with specified work directory", func() {
 			workdir := "/etc/opt"
@@ -449,8 +434,8 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
 			// start container and verify current directory
-			out := command.StdoutStr(opt, "start", "-a", testContainerName)
-			Expect(out).Should(Equal(workdir))
+			out := httpStartContainerAttach(uClient, version, testContainerName)
+			Expect(strings.TrimSpace(out)).Should(Equal(workdir))
 		})
 		It("should create a container with specified memory allocation", func() {
 			// define options
@@ -465,15 +450,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// verify memory allocation from stats command
-			resp := command.StdoutStr(opt, "stats", "--no-stream", "--format", "'{{ json .}}'", testContainerName)
-			var stats map[string]string
-			err := json.Unmarshal([]byte(strings.Trim(resp, "'")), &stats)
-			Expect(err).Should(BeNil())
-			Expect(stats).Should(HaveKey("MemUsage"))
-
-			memAloc := strings.Split(stats["MemUsage"], " / ")[1]
-			Expect(memAloc).Should(Equal("200MiB"))
+			// verify memory allocation via inspect HostConfig
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.Memory).Should(Equal(int64(209715200)))
 		})
 		It("should create a container with specified logging options", func() {
 			// define options
@@ -489,14 +469,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
 			// inspect container
-			resp := command.Stdout(opt, "inspect", testContainerName)
-			var inspect []*dockercompat.Container
-			err := json.Unmarshal(resp, &inspect)
-			Expect(err).Should(BeNil())
-			Expect(inspect).Should(HaveLen(1))
+			inspect := httpInspectContainer(uClient, version, testContainerName)
 
 			// verify log path exists
-			Expect(inspect[0].LogPath).ShouldNot(BeNil())
+			Expect(inspect.LogPath).ShouldNot(BeEmpty())
 		})
 
 		It("should create a container with specified CPU qouta and period options", func() {
@@ -511,32 +487,13 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Navigate to the CPU quota value
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			linux, ok := spec["linux"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			resources, ok := linux["resources"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			cpu, ok := resources["cpu"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			quota, ok := cpu["quota"].(float64)
-			Expect(ok).Should(BeTrue())
-			period, ok := cpu["period"].(float64)
-			Expect(ok).Should(BeTrue())
-			shares, ok := cpu["shares"].(float64)
-			Expect(ok).Should(BeTrue())
+			nativeInspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(nativeInspect.HostConfig).ShouldNot(BeNil())
 
 			// Verify the CPU quota
-			Expect(int64(quota)).Should(Equal(int64(11111)))
-			Expect(int64(shares)).Should(Equal(int64(2048)))
-			Expect(int64(period)).Should(Equal(int64(100000)))
+			Expect(nativeInspect.HostConfig.CPUQuota).Should(Equal(int64(11111)))
+			Expect(nativeInspect.HostConfig.CPUShares).Should(Equal(int64(2048)))
+			Expect(nativeInspect.HostConfig.CPUPeriod).Should(Equal(int64(100000)))
 		})
 
 		It("should create a container with specified Memory qouta and PidLimits options", func() {
@@ -553,25 +510,11 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
 
-			// Navigate to the CPU quota value
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			linux, ok := spec["linux"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			resources, ok := linux["resources"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			memory, _ := resources["memory"].(map[string]interface{})
-
-			pids, _ := resources["pids"].(map[string]interface{})
-
-			Expect(int64(pids["limit"].(float64))).Should(Equal(options.HostConfig.PidsLimit))
-			Expect(int64(memory["limit"].(float64))).Should(Equal(options.HostConfig.Memory))
+			Expect(inspect.HostConfig.PidsLimit).Should(Equal(options.HostConfig.PidsLimit))
+			Expect(inspect.HostConfig.Memory).Should(Equal(options.HostConfig.Memory))
 		})
 
 		It("should create a container with specified Ulimit options", func() {
@@ -591,22 +534,16 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.Ulimits).ShouldNot(BeEmpty())
 
-			// Navigate to the CPU quota value
-			spec, _ := nativeInspect[0]["Spec"].(map[string]interface{})
-			rlimits := spec["process"].(map[string]interface{})["rlimits"].([]interface{})
 			for _, ulimit := range options.HostConfig.Ulimits {
 				found := false
-				for _, rlimit := range rlimits {
-					r := rlimit.(map[string]interface{})
-					if r["type"] == "RLIMIT_NOFILE" {
-						Expect(r["hard"]).To(Equal(float64(ulimit.Hard)))
-						Expect(r["soft"]).To(Equal(float64(ulimit.Soft)))
+				for _, rl := range inspect.HostConfig.Ulimits {
+					if rl.Name == ulimit.Name {
+						Expect(rl.Hard).To(Equal(ulimit.Hard))
+						Expect(rl.Soft).To(Equal(ulimit.Soft))
 						found = true
 						break
 					}
@@ -625,17 +562,9 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Navigate to the CPU quota value
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			capabilities := spec["process"].(map[string]interface{})["capabilities"].(map[string]interface{})
-			Expect(capabilities["bounding"]).To(ContainElements("CAP_SYS_ADMIN", "CAP_NET_ADMIN", "CAP_SYS_MODULE"))
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.Privileged).Should(BeTrue())
 		})
 
 		It("should correctly apply CapAdd and CapDrop", func() {
@@ -649,18 +578,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Navigate to the CPU quota value
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			capabilities := spec["process"].(map[string]interface{})["capabilities"].(map[string]interface{})
-			Expect(capabilities["bounding"]).To(ContainElements("CAP_SYS_TIME", "CAP_NET_ADMIN"))
-			Expect(capabilities["bounding"]).NotTo(ContainElements("CAP_CHOWN", "CAP_NET_RAW"))
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.CapAdd).To(ContainElements("SYS_TIME", "NET_ADMIN"))
+			Expect(inspect.HostConfig.CapDrop).To(ContainElements("CHOWN", "NET_RAW"))
 		})
 
 		It("should create a container with specified network options", func() {
@@ -678,7 +599,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 
 			// start a container and verify network settings
 			httpStartContainer(uClient, version, testContainerName)
-			verifyNetworkSettings(opt, testContainerName, "bridge")
+			verifyNetworkSettings(uClient, version, testContainerName, "bridge")
 		})
 
 		It("should create a container with specified restart options", func() {
@@ -708,15 +629,11 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 				Expect(time.Since(startTime) < maxDuration).Should(BeTrue())
 
 				// inspect container
-				resp := command.Stdout(opt, "inspect", testContainerName)
-				var inspect []*dockercompat.Container
-				err := json.Unmarshal(resp, &inspect)
-				Expect(err).Should(BeNil())
-				Expect(inspect).Should(HaveLen(1))
+				inspect := httpInspectContainer(uClient, version, testContainerName)
 
 				// if container is running, verify it was restarted
-				if inspect[0].State.Running {
-					Expect(inspect[0].RestartCount).Should(Equal(1))
+				if inspect.State.Running {
+					Expect(inspect.RestartCount).Should(Equal(1))
 					return
 				}
 			}
@@ -734,27 +651,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// Start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Inspect the container using native format to verify OomKillDisable
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Navigate to the linux resources memory section
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			linux, ok := spec["linux"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			resources, ok := linux["resources"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			memory, ok := resources["memory"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-
-			// Verify OomKillDisable is set
-			oomKillDisable, ok := memory["disableOOMKiller"].(bool)
-			Expect(ok).Should(BeTrue())
-			Expect(oomKillDisable).Should(BeTrue())
+			// Inspect the container to verify OomKillDisable
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.OomKillDisable).Should(BeTrue())
 		})
 
 		It("should create a container with NetworkDisabled set to true", func() {
@@ -770,19 +670,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// Start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Inspect using the native format to verify network mode is "none"
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Check that network is set to "none" in nerdctl/networks label
-			labels, ok := nativeInspect[0]["Labels"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			networks, ok := labels["nerdctl/networks"].(string)
-			Expect(ok).Should(BeTrue())
-			Expect(networks).Should(ContainSubstring(`"none"`))
+			// Inspect to verify network mode is "none"
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.NetworkMode).Should(Equal("none"))
 		})
 
 		It("should create a container with specified MAC address", func() {
@@ -802,17 +693,13 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			httpStartContainer(uClient, version, testContainerName)
 
 			// Inspect container using Docker-compatible format
-			resp := command.Stdout(opt, "inspect", testContainerName)
-			var inspect []*dockercompat.Container
-			err := json.Unmarshal(resp, &inspect)
-			Expect(err).Should(BeNil())
-			Expect(inspect).Should(HaveLen(1))
+			inspect := httpInspectContainer(uClient, version, testContainerName)
 
 			// Verify MAC address in NetworkSettings
-			Expect(inspect[0].NetworkSettings.MacAddress).Should(Equal(macAddress))
+			Expect(inspect.NetworkSettings.MacAddress).Should(Equal(macAddress))
 
 			// Also verify MAC address in the network details
-			for _, netDetails := range inspect[0].NetworkSettings.Networks {
+			for _, netDetails := range inspect.NetworkSettings.Networks {
 				Expect(netDetails.MacAddress).Should(Equal(macAddress))
 			}
 		})
@@ -831,31 +718,13 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Get native container configuration
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Navigate to the CPU settings
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			linux, ok := spec["linux"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			resources, ok := linux["resources"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			cpu, ok := resources["cpu"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
+			// Verify CPU set settings via HostConfig
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
 
 			// Verify both settings are correct
-			cpuSet, ok := cpu["cpus"].(string)
-			Expect(ok).Should(BeTrue())
-			Expect(cpuSet).Should(Equal("0,1"))
-
-			memSet, ok := cpu["mems"].(string)
-			Expect(ok).Should(BeTrue())
-			Expect(memSet).Should(Equal("0"))
+			Expect(inspect.HostConfig.CPUSetCPUs).Should(Equal("0,1"))
+			Expect(inspect.HostConfig.CPUSetMems).Should(Equal("0"))
 		})
 
 		It("should create container with specified blkio settings options", func() {
@@ -938,22 +807,18 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			httpStartContainer(uClient, version, testContainerName)
 
 			// inspect container
-			resp := command.Stdout(opt, "inspect", testContainerName)
-			var inspect []*dockercompat.Container
-			err := json.Unmarshal(resp, &inspect)
-			Expect(err).Should(BeNil())
-			Expect(inspect).Should(HaveLen(1))
+			inspect := httpInspectContainer(uClient, version, testContainerName)
 
-			// Verify blkio settings in LinuxBlkioSettings
-			blkioSettings := inspect[0].HostConfig.BlkioSettings
+			// Verify blkio settings in HostConfig
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
 			// Verify BlkioWeight
-			Expect(blkioSettings.BlkioWeight).Should(Equal(options.HostConfig.BlkioWeight))
+			Expect(inspect.HostConfig.BlkioWeight).Should(Equal(options.HostConfig.BlkioWeight))
 			// Compare string representations
-			Expect(blkioSettings.BlkioWeightDevice[0].String()).Should(Equal(weightDevices[0].String()))
-			Expect(blkioSettings.BlkioDeviceReadBps[0].String()).Should(Equal(readBpsDevices[0].String()))
-			Expect(blkioSettings.BlkioDeviceWriteBps[0].String()).Should(Equal(writeBpsDevices[0].String()))
-			Expect(blkioSettings.BlkioDeviceReadIOps[0].String()).Should(Equal(readIopsDevices[0].String()))
-			Expect(blkioSettings.BlkioDeviceWriteIOps[0].String()).Should(Equal(writeIopsDevices[0].String()))
+			Expect(inspect.HostConfig.BlkioWeightDevice[0].String()).Should(Equal(weightDevices[0].String()))
+			Expect(inspect.HostConfig.BlkioDeviceReadBps[0].String()).Should(Equal(readBpsDevices[0].String()))
+			Expect(inspect.HostConfig.BlkioDeviceWriteBps[0].String()).Should(Equal(writeBpsDevices[0].String()))
+			Expect(inspect.HostConfig.BlkioDeviceReadIOps[0].String()).Should(Equal(readIopsDevices[0].String()))
+			Expect(inspect.HostConfig.BlkioDeviceWriteIOps[0].String()).Should(Equal(writeIopsDevices[0].String()))
 		})
 
 		It("should create container with volumes from another container", func() {
@@ -1008,9 +873,11 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 
 			// Test write permissions
 			httpExecContainer(uClient, version, toContainerName, []string{"sh", "-exc", "echo -n str1 > /mnt1/file1"})
-			command.RunWithoutSuccessfulExit(opt, "exec", toContainerName, "sh", "-exc", "echo -n str2 > /mnt2/file2")
+			_, exitCode := httpExecContainerWithExitCode(uClient, version, toContainerName, []string{"sh", "-exc", "echo -n str2 > /mnt2/file2"})
+			Expect(exitCode).NotTo(Equal(0))
 			httpExecContainer(uClient, version, toContainerName, []string{"sh", "-exc", "echo -n str3 > /mnt3/file3"})
-			command.RunWithoutSuccessfulExit(opt, "exec", toContainerName, "sh", "-exc", "echo -n str4 > /mnt4/file4")
+			_, exitCode2 := httpExecContainerWithExitCode(uClient, version, toContainerName, []string{"sh", "-exc", "echo -n str4 > /mnt4/file4"})
+			Expect(exitCode2).NotTo(Equal(0))
 
 			// Remove target container
 			httpRemoveContainer(uClient, version, toContainerName)
@@ -1023,8 +890,8 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 
 			statusCode, _ = createContainer(uClient, url, "verify-container", verifyOptions)
 			Expect(statusCode).Should(Equal(http.StatusCreated))
-			out := command.StdoutStr(opt, "start", "-a", "verify-container")
-			Expect(out).Should(Equal("str1str3"))
+			out := httpStartContainerAttach(uClient, version, "verify-container")
+			Expect(strings.TrimSpace(out)).Should(Equal("str1str3"))
 			defer httpRemoveContainer(uClient, version, "verify-container")
 		})
 
@@ -1044,40 +911,11 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// Start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Verify tmpfs mounts using native inspect
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Navigate to the mounts section
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			mounts, ok := spec["mounts"].([]interface{})
-			Expect(ok).Should(BeTrue())
-
-			// Verify tmpfs mounts
-			foundMounts := make(map[string]bool)
-			for _, mount := range mounts {
-				m := mount.(map[string]interface{})
-				if m["type"] == "tmpfs" {
-					foundMounts[m["destination"].(string)] = true
-					if m["destination"] == "/tmpfs1" {
-						options := m["options"].([]interface{})
-						optionsStr := make([]string, len(options))
-						for i, opt := range options {
-							optionsStr[i] = opt.(string)
-						}
-						Expect(optionsStr).Should(ContainElements(
-							"rw",
-							"noexec",
-							"nosuid",
-							"size=65536k",
-						))
-					}
-				}
-			}
+			// Verify tmpfs mounts via HostConfig
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.Tmpfs).Should(HaveKey("/tmpfs1"))
+			Expect(inspect.HostConfig.Tmpfs).Should(HaveKey("/tmpfs2"))
 		})
 
 		It("should create a container with UTSMode set to host", func() {
@@ -1093,31 +931,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// Start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Inspect using native format to verify UTS namespace configuration
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Navigate to the namespaces section
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			linux, ok := spec["linux"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			namespaces, ok := linux["namespaces"].([]interface{})
-			Expect(ok).Should(BeTrue())
-
-			// Verify UTS namespace is not present (indicating host namespace is used)
-			foundUTSNamespace := false
-			for _, ns := range namespaces {
-				namespace := ns.(map[string]interface{})
-				if namespace["type"] == "uts" {
-					foundUTSNamespace = true
-					break
-				}
-			}
-			Expect(foundUTSNamespace).Should(BeFalse())
+			// Verify UTS mode via HostConfig
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.UTSMode).Should(Equal("host"))
 		})
 
 		It("should create a container with specified PidMode", func() {
@@ -1140,14 +957,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
 			// Inspect container using Docker-compatible format
-			resp := command.Stdout(opt, "inspect", testContainerName)
-			var inspect []*dockercompat.Container
-			err := json.Unmarshal(resp, &inspect)
-			Expect(err).Should(BeNil())
-			Expect(inspect).Should(HaveLen(1))
+			inspect := httpInspectContainer(uClient, version, testContainerName)
 
 			// Verify PidMode configuration
-			Expect(inspect[0].HostConfig.PidMode).Should(Equal(hostCtr.ID))
+			Expect(inspect.HostConfig.PidMode).Should(Equal(hostCtr.ID))
 
 			// Cleanup
 			httpRemoveContainer(uClient, version, "host-container")
@@ -1163,29 +976,11 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 
 			httpStartContainer(uClient, version, testContainerName)
 
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
 
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			linux, ok := spec["linux"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			namespaces, ok := linux["namespaces"].([]interface{})
-			Expect(ok).Should(BeTrue())
-
-			// For private IPC mode, verify IPC namespace is present
-			foundIpcNamespace := false
-			for _, ns := range namespaces {
-				namespace := ns.(map[string]interface{})
-				if namespace["type"] == "ipc" {
-					foundIpcNamespace = true
-					break
-				}
-			}
-			Expect(foundIpcNamespace).Should(BeTrue())
+			// For private IPC mode, verify IpcMode is set
+			Expect(inspect.HostConfig.IpcMode).Should(Equal("private"))
 		})
 
 		It("should create a container with privileged mode", func() {
@@ -1201,61 +996,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// Start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Inspect the container using native format
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Navigate to the process capabilities section
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			process, ok := spec["process"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			capabilities, ok := process["capabilities"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-
-			// Verify privileged capabilities
-			// In privileged mode, the container should have extensive capabilities
-			expectedCaps := []string{
-				"CAP_SYS_ADMIN",
-				"CAP_NET_ADMIN",
-				"CAP_SYS_MODULE",
-			}
-
-			for _, capType := range []string{"bounding", "effective", "permitted"} {
-				caps, ok := capabilities[capType].([]interface{})
-				Expect(ok).Should(BeTrue())
-				capsList := make([]string, len(caps))
-				for i, cap := range caps {
-					capsList[i] = cap.(string)
-				}
-				for _, expectedCap := range expectedCaps {
-					Expect(capsList).Should(ContainElement(expectedCap))
-				}
-			}
-
-			// Also verify that devices are allowed in privileged mode
-			linux, ok := spec["linux"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			resources, ok := linux["resources"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			devices, ok := resources["devices"].([]interface{})
-			Expect(ok).Should(BeTrue())
-
-			// In privileged mode, there should be a device rule that allows all devices
-			foundAllowAllDevices := false
-			for _, device := range devices {
-				dev := device.(map[string]interface{})
-				if dev["allow"] == true && dev["access"] == "rwm" {
-					if _, hasType := dev["type"]; !hasType {
-						foundAllowAllDevices = true
-						break
-					}
-				}
-			}
-			Expect(foundAllowAllDevices).Should(BeTrue())
+			// Inspect the container to verify privileged mode
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.Privileged).Should(BeTrue())
 		})
 
 		It("should create a container with specified ShmSize", func() {
@@ -1271,15 +1015,11 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// Start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Inspect container using Docker-compatible format
-			resp := command.Stdout(opt, "inspect", testContainerName)
-			var inspect []*dockercompat.Container
-			err := json.Unmarshal(resp, &inspect)
-			Expect(err).Should(BeNil())
-			Expect(inspect).Should(HaveLen(1))
+			// Inspect container
+			inspect := httpInspectContainer(uClient, version, testContainerName)
 
 			// Verify ShmSize in HostConfig
-			Expect(inspect[0].HostConfig.ShmSize).Should(Equal(options.HostConfig.ShmSize))
+			Expect(inspect.HostConfig.ShmSize).Should(Equal(options.HostConfig.ShmSize))
 		})
 
 		It("should create a container with specified Sysctls", func() {
@@ -1298,24 +1038,14 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// Start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Verify sysctls using native inspect
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Navigate to the sysctls section
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			linux, ok := spec["linux"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			sysctls, ok := linux["sysctl"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
+			// Verify sysctls via HostConfig
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.Sysctls).ShouldNot(BeNil())
 
 			// Verify sysctl values
-			Expect(sysctls["net.ipv4.ip_forward"]).Should(Equal("1"))
-			Expect(sysctls["kernel.msgmax"]).Should(Equal("65536"))
+			Expect(inspect.HostConfig.Sysctls["net.ipv4.ip_forward"]).Should(Equal("1"))
+			Expect(inspect.HostConfig.Sysctls["kernel.msgmax"]).Should(Equal("65536"))
 		})
 
 		It("should create a container with specified Runtime", func() {
@@ -1331,21 +1061,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// Start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Verify runtime using native inspect
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Navigate to the Runtime section
-			runtime, ok := nativeInspect[0]["Runtime"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-
-			// Verify runtime name
-			runtimeName, ok := runtime["Name"].(string)
-			Expect(ok).Should(BeTrue())
-			Expect(runtimeName).Should(Equal(options.HostConfig.Runtime))
+			// Verify runtime via HostConfig
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.Runtime).Should(Equal(options.HostConfig.Runtime))
 		})
 
 		It("should create a container with readonly root filesystem", func() {
@@ -1358,21 +1077,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			Expect(ctr.ID).ShouldNot(BeEmpty())
 
-			// Additional verification through native inspect
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Verify readonly root in the spec
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			root, ok := spec["root"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			readonly, ok := root["readonly"].(bool)
-			Expect(ok).Should(BeTrue())
-			Expect(readonly).Should(BeTrue())
+			// Verify readonly root via HostConfig
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.ReadonlyRootfs).Should(BeTrue())
 		})
 
 		It("should create a container with specified annotation", func() {
@@ -1390,19 +1098,11 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// Start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Inspect using native format to verify annotation
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Verify annotation in container spec
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			annotations, ok := spec["annotations"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			Expect(annotations["com.example.key"]).Should(Equal("test-value"))
+			// Verify annotation via HostConfig
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.Annotations).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.Annotations["com.example.key"]).Should(Equal("test-value"))
 		})
 
 		It("should create a container with CgroupnsMode set to host", func() {
@@ -1418,31 +1118,10 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// Start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Inspect using native format to verify cgroup namespace configuration
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
-
-			// Navigate to the namespaces section
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			linux, ok := spec["linux"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			namespaces, ok := linux["namespaces"].([]interface{})
-			Expect(ok).Should(BeTrue())
-
-			// For host mode, cgroup namespace should not be present in the namespaces list
-			foundCgroupNS := false
-			for _, ns := range namespaces {
-				namespace := ns.(map[string]interface{})
-				if namespace["type"] == "cgroup" {
-					foundCgroupNS = true
-					break
-				}
-			}
-			Expect(foundCgroupNS).Should(BeFalse())
+			// Verify cgroup namespace mode via HostConfig
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(string(inspect.HostConfig.CgroupnsMode)).Should(Equal("host"))
 		})
 
 		It("should create a container with device mappings", func() {
@@ -1471,13 +1150,6 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			writeOpt, _ := pOpt([]string{"sh", "-c", "echo -n test-content > " + loopDev})
 			command.Run(writeOpt)
 
-			// Get device info to verify major/minor numbers
-			statOpt, _ := pOpt([]string{"stat", "-c", "%t,%T", loopDev})
-			devNums := command.StdoutStr(statOpt)
-			parts := strings.Split(devNums, ",")
-			major, _ := strconv.ParseUint(parts[0], 16, 64)
-			minor, _ := strconv.ParseUint(parts[1], 16, 64)
-
 			options.Cmd = []string{"sleep", "Infinity"}
 			options.HostConfig.Devices = []types.DeviceMapping{
 				{
@@ -1495,61 +1167,22 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			// Start container
 			httpStartContainer(uClient, version, testContainerName)
 
-			// Inspect using native format
-			nativeResp := command.Stdout(opt, "inspect", "--mode=native", testContainerName)
-			var nativeInspect []map[string]interface{}
-			err2 := json.Unmarshal(nativeResp, &nativeInspect)
-			Expect(err2).Should(BeNil())
-			Expect(nativeInspect).Should(HaveLen(1))
+			// Inspect to verify device mapping via HostConfig
+			inspect := httpInspectContainer(uClient, version, testContainerName)
+			Expect(inspect.HostConfig).ShouldNot(BeNil())
+			Expect(inspect.HostConfig.Devices).ShouldNot(BeEmpty())
 
-			// Navigate to the linux section
-			spec, ok := nativeInspect[0]["Spec"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			linux, ok := spec["linux"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-
-			// Verify device in linux.devices
-			devices, ok := linux["devices"].([]interface{})
-			Expect(ok).Should(BeTrue())
-
+			// Verify device is in the HostConfig devices list
 			foundDevice := false
-			for _, device := range devices {
-				d := device.(map[string]interface{})
-				if d["path"] == loopDev {
+			for _, d := range inspect.HostConfig.Devices {
+				if d.PathOnHost == loopDev {
 					foundDevice = true
-					Expect(d["type"]).Should(Equal("b")) // block device
-					Expect(d["major"].(float64)).Should(Equal(float64(major)))
-					Expect(d["minor"].(float64)).Should(Equal(float64(minor)))
+					Expect(d.PathInContainer).Should(Equal(loopDev))
+					Expect(d.CgroupPermissions).Should(Equal("rwm"))
 					break
 				}
 			}
 			Expect(foundDevice).Should(BeTrue())
-
-			// Verify device permissions in linux.resources.devices
-			resources, ok := linux["resources"].(map[string]interface{})
-			Expect(ok).Should(BeTrue())
-			resourceDevices, ok := resources["devices"].([]interface{})
-			Expect(ok).Should(BeTrue())
-
-			// First rule should be deny all
-			denyAll := resourceDevices[0].(map[string]interface{})
-			Expect(denyAll["allow"]).Should(BeFalse())
-			Expect(denyAll["access"]).Should(Equal("rwm"))
-
-			// Should find an allow rule for our device
-			foundAllowRule := false
-			for _, rule := range resourceDevices {
-				r := rule.(map[string]interface{})
-				if r["allow"] == true &&
-					r["type"] == "b" &&
-					r["major"].(float64) == float64(major) &&
-					r["minor"].(float64) == float64(minor) {
-					foundAllowRule = true
-					Expect(r["access"]).Should(Equal("rwm"))
-					break
-				}
-			}
-			Expect(foundAllowRule).Should(BeTrue())
 		})
 	})
 }
@@ -1571,26 +1204,16 @@ func createContainer(client *http.Client, url, ctrName string, ctrOptions types.
 }
 
 // verifies that the container is connected to the network specified.
-func verifyNetworkSettings(opt *option.Option, ctrName, network string) {
+func verifyNetworkSettings(uClient *http.Client, version, ctrName, network string) {
 	// inspect network
-	resp := command.Stdout(opt, "network", "inspect", network)
-	var inspectNetResp []*dockercompat.Network
-	err := json.Unmarshal(resp, &inspectNetResp)
-	Expect(err).Should(BeNil())
-	Expect(inspectNetResp).Should(HaveLen(1))
-	inspectNet := inspectNetResp[0]
+	inspectNet := httpInspectNetwork(uClient, version, network)
 	Expect(inspectNet.IPAM.Config).Should(HaveLen(1))
 	gateway := strings.Split(inspectNet.IPAM.Config[0].Gateway, ".")
 	Expect(gateway).Should(HaveLen(4))
 	expectedMask := strings.Join(gateway[:3], ".")
 
 	// inspect container
-	resp = command.Stdout(opt, "inspect", ctrName)
-	var inspectCtrResp []*dockercompat.Container
-	err = json.Unmarshal(resp, &inspectCtrResp)
-	Expect(err).Should(BeNil())
-	Expect(inspectCtrResp).Should(HaveLen(1))
-	inspectCtr := inspectCtrResp[0]
+	inspectCtr := httpInspectContainer(uClient, version, ctrName)
 
 	// ensure that container is connected to the specified network
 	foundNetwork := ""

@@ -35,10 +35,10 @@ func ContainerInspect(opt *option.Option, pOpt util.NewOpt) {
 			version = GetDockerApiVersion()
 			containerName = testContainerName
 			wantContainerName = fmt.Sprintf("/%s", containerName)
-			containerId = command.StdoutStr(opt, "run", "-d", "--name", containerName, defaultImage, "sleep", "infinity")
+			containerId = httpRunContainer(uClient, version, containerName, defaultImage, []string{"sleep", "infinity"})
 		})
 		AfterEach(func() {
-			command.RemoveAll(opt)
+			httpRemoveAll(uClient, version)
 		})
 
 		It("should inspect the container by ID", func() {
