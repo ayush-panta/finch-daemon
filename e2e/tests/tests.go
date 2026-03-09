@@ -16,10 +16,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/docker/go-connections/nat"
 	"github.com/onsi/ginkgo/v2"
@@ -105,11 +107,32 @@ func SetupLocalRegistry() {
 	}
 	httpStartContainer(uClient, version, containerID)
 
+	// Wait for the registry to be ready before pushing.
+	waitForRegistry(hostPort)
+
 	httpPullImage(uClient, version, alpineImage)
 	defaultImage = fmt.Sprintf("localhost:%d/alpine:latest", hostPort)
 	httpTagImage(uClient, version, alpineImage, defaultImage)
 	httpPushImage(uClient, version, defaultImage)
 	httpRemoveImage(uClient, version, alpineImage)
+}
+
+// waitForRegistry polls the registry's /v2/ endpoint until it returns 200 or times out.
+// This is a direct TCP connection to the registry container's exposed port, not through the daemon.
+func waitForRegistry(hostPort int) {
+	url := fmt.Sprintf("http://localhost:%d/v2/", hostPort)
+	client := &http.Client{Timeout: 2 * time.Second}
+	for i := 0; i < 30; i++ {
+		resp, err := client.Get(url) //nolint:noctx // registry readiness poll does not need a context
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusUnauthorized {
+				return
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	gomega.Expect(false).To(gomega.BeTrue(), fmt.Sprintf("registry at localhost:%d never became ready", hostPort))
 }
 
 // httpTryCreateContainer attempts to create a container and returns (id, true) on success,
@@ -196,15 +219,19 @@ func httpPullImage(uClient *http.Client, version, imageName string) {
 // httpTagImage tags an image using the HTTP API.
 func httpTagImage(uClient *http.Client, version, sourceImage, targetImage string) {
 	// Parse the target image to get repo and tag
-	parts := strings.Split(targetImage, ":")
-	repo := parts[0]
+	// targetImage is e.g. "localhost:12345/alpine:latest"
+	// Split on the LAST colon to separate tag from repo
+	lastColon := strings.LastIndex(targetImage, ":")
+	repo := targetImage
 	tag := "latest"
-	if len(parts) > 1 {
-		tag = parts[1]
+	if lastColon > 0 {
+		repo = targetImage[:lastColon]
+		tag = targetImage[lastColon+1:]
 	}
-	relativeUrl := fmt.Sprintf("/images/%s/tag?repo=%s&tag=%s", sourceImage, repo, tag)
-	url := client.ConvertToFinchUrl(version, relativeUrl)
-	resp, err := uClient.Post(url, "application/json", nil)
+	relativeUrl := fmt.Sprintf("/images/%s/tag?repo=%s&tag=%s",
+		url.PathEscape(sourceImage), url.QueryEscape(repo), url.QueryEscape(tag))
+	u := client.ConvertToFinchUrl(version, relativeUrl)
+	resp, err := uClient.Post(u, "application/json", nil)
 	gomega.Expect(err).Should(gomega.BeNil())
 	defer resp.Body.Close()
 	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusCreated))
@@ -212,9 +239,9 @@ func httpTagImage(uClient *http.Client, version, sourceImage, targetImage string
 
 // httpPushImage pushes an image using the HTTP API.
 func httpPushImage(uClient *http.Client, version, imageName string) {
-	relativeUrl := fmt.Sprintf("/images/%s/push", imageName)
-	url := client.ConvertToFinchUrl(version, relativeUrl)
-	resp, err := uClient.Post(url, "application/json", nil)
+	relativeUrl := fmt.Sprintf("/images/%s/push", url.PathEscape(imageName))
+	u := client.ConvertToFinchUrl(version, relativeUrl)
+	resp, err := uClient.Post(u, "application/json", nil)
 	gomega.Expect(err).Should(gomega.BeNil())
 	defer resp.Body.Close()
 	// Read body to completion
@@ -433,6 +460,8 @@ func httpRemoveNetwork(uClient *http.Client, version, networkID string) {
 }
 
 // httpContainerLogs gets the logs of a container using the HTTP API.
+// The Docker logs API returns a multiplexed stream with 8-byte frame headers
+// ([stream_type(1), 0, 0, 0, size(4 big-endian)]), so we demultiplex it here.
 func httpContainerLogs(uClient *http.Client, version, containerID string) string {
 	relativeUrl := fmt.Sprintf("/containers/%s/logs?stdout=true&stderr=true", containerID)
 	url := client.ConvertToFinchUrl(version, relativeUrl)
@@ -440,8 +469,22 @@ func httpContainerLogs(uClient *http.Client, version, containerID string) string
 	gomega.Expect(err).Should(gomega.BeNil())
 	defer resp.Body.Close()
 	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusOK))
-	output, _ := io.ReadAll(resp.Body)
-	return string(output)
+	var buf strings.Builder
+	hdr := make([]byte, 8)
+	for {
+		_, err := io.ReadFull(resp.Body, hdr)
+		if err != nil {
+			break
+		}
+		size := uint32(hdr[4])<<24 | uint32(hdr[5])<<16 | uint32(hdr[6])<<8 | uint32(hdr[7])
+		frame := make([]byte, size)
+		_, err = io.ReadFull(resp.Body, frame)
+		if err != nil {
+			break
+		}
+		buf.Write(frame)
+	}
+	return buf.String()
 }
 
 // httpExecContainer creates and starts an exec instance in a container using the HTTP API.
