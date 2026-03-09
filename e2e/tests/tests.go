@@ -450,6 +450,279 @@ func httpExecContainer(uClient *http.Client, version, containerID string, cmd []
 	return string(output)
 }
 
+// httpListContainers lists containers using the HTTP API.
+// When all is true, includes stopped containers.
+func httpListContainers(uClient *http.Client, version string, all bool) []types.ContainerListItem {
+	relativeUrl := fmt.Sprintf("/containers/json?all=%t", all)
+	url := client.ConvertToFinchUrl(version, relativeUrl)
+	resp, err := uClient.Get(url)
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer resp.Body.Close()
+	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusOK))
+	var containers []types.ContainerListItem
+	err = json.NewDecoder(resp.Body).Decode(&containers)
+	gomega.Expect(err).Should(gomega.BeNil())
+	return containers
+}
+
+// httpListImages lists images using the HTTP API.
+func httpListImages(uClient *http.Client, version string) []types.ImageSummary {
+	url := client.ConvertToFinchUrl(version, "/images/json")
+	resp, err := uClient.Get(url)
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer resp.Body.Close()
+	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusOK))
+	var images []types.ImageSummary
+	err = json.NewDecoder(resp.Body).Decode(&images)
+	gomega.Expect(err).Should(gomega.BeNil())
+	return images
+}
+
+// httpListVolumes lists volumes using the HTTP API.
+func httpListVolumes(uClient *http.Client, version string) types.VolumesListResponse {
+	url := client.ConvertToFinchUrl(version, "/volumes")
+	resp, err := uClient.Get(url)
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer resp.Body.Close()
+	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusOK))
+	var volumes types.VolumesListResponse
+	err = json.NewDecoder(resp.Body).Decode(&volumes)
+	gomega.Expect(err).Should(gomega.BeNil())
+	return volumes
+}
+
+// httpListNetworks lists networks using the HTTP API.
+func httpListNetworks(uClient *http.Client, version string) []*types.NetworkInspectResponse {
+	url := client.ConvertToFinchUrl(version, "/networks")
+	resp, err := uClient.Get(url)
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer resp.Body.Close()
+	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusOK))
+	var networks []*types.NetworkInspectResponse
+	err = json.NewDecoder(resp.Body).Decode(&networks)
+	gomega.Expect(err).Should(gomega.BeNil())
+	return networks
+}
+
+// httpRemoveAll removes all containers, non-default images, volumes, and non-default networks.
+// Ignores individual deletion failures to ensure best-effort cleanup.
+func httpRemoveAll(uClient *http.Client, version string) {
+	// Remove all containers (including stopped)
+	containers := httpListContainers(uClient, version, true)
+	for _, c := range containers {
+		httpRemoveContainerForce(uClient, version, c.Id)
+	}
+
+	// Remove all non-default images
+	images := httpListImages(uClient, version)
+	for _, img := range images {
+		for _, tag := range img.RepoTags {
+			httpRemoveImageForce(uClient, version, tag)
+		}
+	}
+
+	// Remove all volumes
+	vols := httpListVolumes(uClient, version)
+	for _, v := range vols.Volumes {
+		httpRemoveVolume(uClient, version, v.Name)
+	}
+
+	// Remove non-default networks
+	networks := httpListNetworks(uClient, version)
+	for _, n := range networks {
+		if n.Name != "bridge" && n.Name != "host" && n.Name != "none" {
+			httpRemoveNetwork(uClient, version, n.ID)
+		}
+	}
+}
+
+// httpRemoveAllImages removes all non-default images using the HTTP API.
+func httpRemoveAllImages(uClient *http.Client, version string) {
+	images := httpListImages(uClient, version)
+	for _, img := range images {
+		for _, tag := range img.RepoTags {
+			httpRemoveImageForce(uClient, version, tag)
+		}
+	}
+}
+
+// httpInspectContainer inspects a container using the HTTP API.
+func httpInspectContainer(uClient *http.Client, version, id string) types.Container {
+	relativeUrl := fmt.Sprintf("/containers/%s/json", id)
+	url := client.ConvertToFinchUrl(version, relativeUrl)
+	resp, err := uClient.Get(url)
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer resp.Body.Close()
+	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusOK))
+	var container types.Container
+	err = json.NewDecoder(resp.Body).Decode(&container)
+	gomega.Expect(err).Should(gomega.BeNil())
+	return container
+}
+
+// httpInspectNetwork inspects a network using the HTTP API.
+func httpInspectNetwork(uClient *http.Client, version, id string) types.NetworkInspectResponse {
+	relativeUrl := fmt.Sprintf("/networks/%s", id)
+	url := client.ConvertToFinchUrl(version, relativeUrl)
+	resp, err := uClient.Get(url)
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer resp.Body.Close()
+	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusOK))
+	var network types.NetworkInspectResponse
+	err = json.NewDecoder(resp.Body).Decode(&network)
+	gomega.Expect(err).Should(gomega.BeNil())
+	return network
+}
+
+// httpCreateNetworkWithLabels creates a network with labels using the HTTP API.
+func httpCreateNetworkWithLabels(uClient *http.Client, version, networkName string, labels map[string]string) string {
+	url := client.ConvertToFinchUrl(version, "/networks/create")
+	reqBody := map[string]interface{}{
+		"Name":   networkName,
+		"Labels": labels,
+	}
+	body, err := json.Marshal(reqBody)
+	gomega.Expect(err).Should(gomega.BeNil())
+	resp, err := uClient.Post(url, "application/json", bytes.NewReader(body))
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer resp.Body.Close()
+	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusCreated))
+	var result struct {
+		ID string `json:"Id"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	gomega.Expect(err).Should(gomega.BeNil())
+	return result.ID
+}
+
+// httpStartContainerAttach starts a container with attach, captures stdout, and waits for completion.
+func httpStartContainerAttach(uClient *http.Client, version, id string) string {
+	// Attach to container stdout
+	attachUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/containers/%s/attach?stdout=1&stream=1", id))
+	attachResp, err := uClient.Post(attachUrl, "application/json", nil)
+	gomega.Expect(err).Should(gomega.BeNil())
+
+	// Start the container
+	httpStartContainer(uClient, version, id)
+
+	// Read all output from the attach stream
+	defer attachResp.Body.Close()
+	output, _ := io.ReadAll(attachResp.Body)
+	return string(output)
+}
+
+// httpExecContainerWithExitCode creates and starts an exec instance, returning output and exit code.
+func httpExecContainerWithExitCode(uClient *http.Client, version, containerID string, cmd []string) (string, int) {
+	// Create exec instance
+	createUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/containers/%s/exec", containerID))
+	createReq := map[string]interface{}{
+		"Cmd":          cmd,
+		"AttachStdout": true,
+		"AttachStderr": true,
+	}
+	body, err := json.Marshal(createReq)
+	gomega.Expect(err).Should(gomega.BeNil())
+	resp, err := uClient.Post(createUrl, "application/json", bytes.NewReader(body))
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer resp.Body.Close()
+	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusCreated))
+
+	var execResp struct {
+		ID string `json:"Id"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&execResp)
+	gomega.Expect(err).Should(gomega.BeNil())
+
+	// Start exec instance
+	startUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/exec/%s/start", execResp.ID))
+	startReq := map[string]interface{}{
+		"Detach": false,
+	}
+	startBody, err := json.Marshal(startReq)
+	gomega.Expect(err).Should(gomega.BeNil())
+	startResp, err := uClient.Post(startUrl, "application/json", bytes.NewReader(startBody))
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer startResp.Body.Close()
+	output, _ := io.ReadAll(startResp.Body)
+
+	// Inspect exec for exit code
+	inspectUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/exec/%s/json", execResp.ID))
+	inspectResp, err := uClient.Get(inspectUrl)
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer inspectResp.Body.Close()
+	var execInspect struct {
+		ExitCode int `json:"ExitCode"`
+	}
+	err = json.NewDecoder(inspectResp.Body).Decode(&execInspect)
+	gomega.Expect(err).Should(gomega.BeNil())
+
+	return string(output), execInspect.ExitCode
+}
+
+// httpBuildImage builds an image from a build context directory using the HTTP API.
+func httpBuildImage(uClient *http.Client, version, tag, buildContextDir string) {
+	// Create tar archive of the build context
+	tarReader, err := createTarFromBuildContext(buildContextDir)
+	gomega.Expect(err).Should(gomega.BeNil())
+
+	relativeUrl := fmt.Sprintf("/build?t=%s", tag)
+	url := client.ConvertToFinchUrl(version, relativeUrl)
+	resp, err := uClient.Post(url, "application/x-tar", tarReader)
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer resp.Body.Close()
+	// Read body to completion to ensure build finishes
+	_, _ = io.Copy(io.Discard, resp.Body)
+	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusOK))
+}
+
+// httpRegistryLogin authenticates with a registry using the HTTP API and writes credentials to Docker config.
+func httpRegistryLogin(uClient *http.Client, version, registry, user, password string) {
+	url := client.ConvertToFinchUrl(version, "/auth")
+	reqBody := map[string]string{
+		"username":      user,
+		"password":      password,
+		"serveraddress": registry,
+	}
+	body, err := json.Marshal(reqBody)
+	gomega.Expect(err).Should(gomega.BeNil())
+	resp, err := uClient.Post(url, "application/json", bytes.NewReader(body))
+	gomega.Expect(err).Should(gomega.BeNil())
+	defer resp.Body.Close()
+	gomega.Expect(resp.StatusCode).Should(gomega.Equal(http.StatusOK))
+}
+
+// httpRegistryLogout removes registry credentials from Docker config JSON.
+func httpRegistryLogout(registry string) {
+	home, err := os.UserHomeDir()
+	gomega.Expect(err).Should(gomega.BeNil())
+	configPath := filepath.Join(home, ".docker", "config.json")
+
+	data, err := os.ReadFile(filepath.Clean(configPath))
+	if err != nil {
+		// Config file doesn't exist, nothing to do
+		return
+	}
+
+	var config map[string]interface{}
+	err = json.Unmarshal(data, &config)
+	if err != nil {
+		return
+	}
+
+	auths, ok := config["auths"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	delete(auths, registry)
+	config["auths"] = auths
+
+	updatedData, err := json.MarshalIndent(config, "", "  ")
+	gomega.Expect(err).Should(gomega.BeNil())
+	err = os.WriteFile(configPath, updatedData, 0600)
+	gomega.Expect(err).Should(gomega.BeNil())
+}
+
 func containerShouldBeRunning(opt *option.Option, containerNames ...string) {
 	for _, containerName := range containerNames {
 		gomega.Expect(command.Stdout(opt, "ps", "-q", "--filter",
