@@ -605,16 +605,37 @@ func httpListNetworks(uClient *http.Client, version string) []*types.NetworkInsp
 
 // httpRemoveAll removes all containers, non-default images, volumes, and non-default networks.
 // Ignores individual deletion failures to ensure best-effort cleanup.
+// Skips the local-registry container so it persists across test AfterEach cleanups.
 func httpRemoveAll(uClient *http.Client, version string) {
-	// Remove all containers (including stopped)
+	// Remove all containers (including stopped), but preserve the local registry.
 	containers := httpListContainers(uClient, version, true)
 	for _, c := range containers {
+		isRegistry := false
+		for _, name := range c.Names {
+			if name == localRegistryName || name == "/"+localRegistryName {
+				isRegistry = true
+				break
+			}
+		}
+		if isRegistry {
+			continue
+		}
 		httpRemoveContainerForce(uClient, version, c.Id)
 	}
 
-	// Remove all non-default images
+	// Remove all non-default images, but preserve the local registry image and defaultImage.
 	images := httpListImages(uClient, version)
 	for _, img := range images {
+		preserve := false
+		for _, tag := range img.RepoTags {
+			if tag == registryImage || tag == defaultImage {
+				preserve = true
+				break
+			}
+		}
+		if preserve {
+			continue
+		}
 		for _, tag := range img.RepoTags {
 			httpRemoveImageForce(uClient, version, tag)
 		}
