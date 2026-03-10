@@ -963,7 +963,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(inspect.HostConfig.PidMode).Should(Equal(hostCtr.ID))
 
 			// Cleanup
-			httpRemoveContainer(uClient, version, "host-container")
+			httpRemoveContainerForce(uClient, version, "host-container")
 		})
 
 		It("should create a container with private IPC mode", func() {

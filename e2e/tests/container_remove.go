@@ -67,7 +67,7 @@ func ContainerRemove(opt *option.Option) {
 			containerShouldNotExist(testContainerName)
 		})
 		It("should successfully remove a volume associated with it", func() {
-			// start a container with a volume
+			// start a container with a named volume so v=true removes it and it shows in volume list
 			httpRunContainerWithOptions(uClient, version, testContainerName, types.ContainerCreateRequest{
 				ContainerConfig: types.ContainerConfig{
 					Image: defaultImage,

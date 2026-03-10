@@ -158,7 +158,12 @@ func DistributionInspect(opt *option.Option) {
 			DeferCleanup(func() {
 				httpRegistryLogout(registry)
 			})
-			httpPushImage(uClient, version, authImageTag)
+			authHeader := b64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(`{
+  "username": "%s",
+  "password": "%s",
+  "serveraddress": "%s"
+}`, testUser, testPassword, registry)))
+			httpPushImageWithAuth(uClient, version, authImageTag, authHeader)
 
 			relativeUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/distribution/%s/json", authImageTag))
 
@@ -191,7 +196,12 @@ func DistributionInspect(opt *option.Option) {
 
 		It("should fail to inspect an image which needs registry credentials when not logged in", func() {
 			httpRegistryLogin(uClient, version, registry, testUser, testPassword)
-			httpPushImage(uClient, version, authImageTag)
+			authHeader := b64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(`{
+  "username": "%s",
+  "password": "%s",
+  "serveraddress": "%s"
+}`, testUser, testPassword, registry)))
+			httpPushImageWithAuth(uClient, version, authImageTag, authHeader)
 			httpRegistryLogout(registry)
 
 			relativeUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/distribution/%s/json", authImageTag))

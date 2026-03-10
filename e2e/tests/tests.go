@@ -258,9 +258,20 @@ func httpTagImage(uClient *http.Client, version, sourceImage, targetImage string
 
 // httpPushImage pushes an image using the HTTP API.
 func httpPushImage(uClient *http.Client, version, imageName string) {
+	httpPushImageWithAuth(uClient, version, imageName, "")
+}
+
+// httpPushImageWithAuth pushes an image using the HTTP API with an optional base64-encoded X-Registry-Auth header.
+func httpPushImageWithAuth(uClient *http.Client, version, imageName, registryAuth string) {
 	relativeUrl := fmt.Sprintf("/images/%s/push", imageName)
 	u := client.ConvertToFinchUrl(version, relativeUrl)
-	resp, err := uClient.Post(u, "application/json", nil)
+	req, err := http.NewRequest(http.MethodPost, u, nil)
+	gomega.Expect(err).Should(gomega.BeNil())
+	req.Header.Set("Content-Type", "application/json")
+	if registryAuth != "" {
+		req.Header.Set("X-Registry-Auth", registryAuth)
+	}
+	resp, err := uClient.Do(req)
 	gomega.Expect(err).Should(gomega.BeNil())
 	defer resp.Body.Close()
 	// Read body to completion
@@ -730,19 +741,41 @@ func httpCreateNetworkWithLabels(uClient *http.Client, version, networkName stri
 }
 
 // httpStartContainerAttach starts a container with attach, captures stdout, and waits for completion.
+// The attach stream uses Docker's multiplexed format (8-byte frame headers) when TTY=false,
+// so we demultiplex it the same way as httpContainerLogs and httpExecContainer.
 func httpStartContainerAttach(uClient *http.Client, version, id string) string {
-	// Attach to container stdout
-	attachUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/containers/%s/attach?stdout=1&stream=1", id))
+	// Attach to container stdout (logs=1 ensures buffered output is included for fast-exiting containers)
+	attachUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/containers/%s/attach?stdout=1&stream=1&logs=1", id))
 	attachResp, err := uClient.Post(attachUrl, "application/json", nil)
 	gomega.Expect(err).Should(gomega.BeNil())
+
+	// Read the attach stream in a goroutine so we don't miss output from fast-exiting containers.
+	type result struct{ s string }
+	ch := make(chan result, 1)
+	go func() {
+		defer attachResp.Body.Close()
+		var buf strings.Builder
+		hdr := make([]byte, 8)
+		for {
+			_, err := io.ReadFull(attachResp.Body, hdr)
+			if err != nil {
+				break
+			}
+			size := uint32(hdr[4])<<24 | uint32(hdr[5])<<16 | uint32(hdr[6])<<8 | uint32(hdr[7])
+			frame := make([]byte, size)
+			_, err = io.ReadFull(attachResp.Body, frame)
+			if err != nil {
+				break
+			}
+			buf.Write(frame)
+		}
+		ch <- result{buf.String()}
+	}()
 
 	// Start the container
 	httpStartContainer(uClient, version, id)
 
-	// Read all output from the attach stream
-	defer attachResp.Body.Close()
-	output, _ := io.ReadAll(attachResp.Body)
-	return string(output)
+	return (<-ch).s
 }
 
 // httpExecContainerWithExitCode creates and starts an exec instance, returning output and exit code.

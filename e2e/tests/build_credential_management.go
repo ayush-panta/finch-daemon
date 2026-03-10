@@ -77,6 +77,8 @@ func CredentialHelper(opt *option.Option, pOpt func([]string, ...option.Modifier
 			})
 			registry = fmt.Sprintf(`localhost:%d`, port)
 
+			waitForRegistry(port)
+
 			httpPullImage(uClient, version, defaultImage)
 
 			authImageTag = fmt.Sprintf(`%s/test-login:tag`, registry)
@@ -91,7 +93,12 @@ func CredentialHelper(opt *option.Option, pOpt func([]string, ...option.Modifier
 			DeferCleanup(func() {
 				httpRegistryLogout(registry)
 			})
-			httpPushImage(uClient, version, authImageTag)
+			authHeader := b64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(`{
+  "username": "%s",
+  "password": "%s",
+  "serveraddress": "%s"
+}`, testUser, testPassword, registry)))
+			httpPushImageWithAuth(uClient, version, authImageTag, authHeader)
 			httpRemoveImage(uClient, version, authImageTag)
 		})
 
