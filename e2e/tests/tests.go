@@ -539,9 +539,23 @@ func httpExecContainer(uClient *http.Client, version, containerID string, cmd []
 	gomega.Expect(err).Should(gomega.BeNil())
 	defer startResp.Body.Close()
 
-	// Read output
-	output, _ := io.ReadAll(startResp.Body)
-	return string(output)
+	// Demultiplex the Docker multiplexed stream (8-byte frame headers).
+	var buf strings.Builder
+	hdr := make([]byte, 8)
+	for {
+		_, err := io.ReadFull(startResp.Body, hdr)
+		if err != nil {
+			break
+		}
+		size := uint32(hdr[4])<<24 | uint32(hdr[5])<<16 | uint32(hdr[6])<<8 | uint32(hdr[7])
+		frame := make([]byte, size)
+		_, err = io.ReadFull(startResp.Body, frame)
+		if err != nil {
+			break
+		}
+		buf.Write(frame)
+	}
+	return buf.String()
 }
 
 // httpListContainers lists containers using the HTTP API.
@@ -763,7 +777,23 @@ func httpExecContainerWithExitCode(uClient *http.Client, version, containerID st
 	startResp, err := uClient.Post(startUrl, "application/json", bytes.NewReader(startBody))
 	gomega.Expect(err).Should(gomega.BeNil())
 	defer startResp.Body.Close()
-	output, _ := io.ReadAll(startResp.Body)
+
+	// Demultiplex the Docker multiplexed stream (8-byte frame headers).
+	var buf strings.Builder
+	hdr := make([]byte, 8)
+	for {
+		_, err := io.ReadFull(startResp.Body, hdr)
+		if err != nil {
+			break
+		}
+		size := uint32(hdr[4])<<24 | uint32(hdr[5])<<16 | uint32(hdr[6])<<8 | uint32(hdr[7])
+		frame := make([]byte, size)
+		_, err = io.ReadFull(startResp.Body, frame)
+		if err != nil {
+			break
+		}
+		buf.Write(frame)
+	}
 
 	// Inspect exec for exit code
 	inspectUrl := client.ConvertToFinchUrl(version, fmt.Sprintf("/exec/%s/json", execResp.ID))
@@ -776,7 +806,7 @@ func httpExecContainerWithExitCode(uClient *http.Client, version, containerID st
 	err = json.NewDecoder(inspectResp.Body).Decode(&execInspect)
 	gomega.Expect(err).Should(gomega.BeNil())
 
-	return string(output), execInspect.ExitCode
+	return buf.String(), execInspect.ExitCode
 }
 
 // httpBuildImage builds an image from a build context directory using the HTTP API.

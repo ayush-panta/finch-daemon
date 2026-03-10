@@ -50,6 +50,7 @@ func ImagePush(opt *option.Option) {
 					},
 				},
 			})
+			waitForRegistry(port)
 		})
 
 		AfterEach(func() {
@@ -93,6 +94,7 @@ func ImagePush(opt *option.Option) {
 					},
 				},
 			})
+			waitForRegistry(secondRegistryPort)
 
 			name2 := fmt.Sprintf(`localhost:%d/test-push:tag`, secondRegistryPort)
 			httpTagImage(uClient, version, name, name2)

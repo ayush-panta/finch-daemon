@@ -69,6 +69,7 @@ func DistributionInspect(opt *option.Option) {
 					},
 				},
 			})
+			waitForRegistry(port)
 			registry = fmt.Sprintf(`localhost:%d`, port)
 			authImageTag = fmt.Sprintf(`%s/test-login:tag`, registry)
 			buildContext := ffs.CreateBuildContext(fmt.Sprintf(`FROM %s

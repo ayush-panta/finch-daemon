@@ -856,7 +856,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			statusCode, _ := createContainer(uClient, url, fromContainerName, sourceOptions)
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			httpStartContainer(uClient, version, fromContainerName)
-			defer httpRemoveContainer(uClient, version, fromContainerName)
+			defer httpRemoveContainerForce(uClient, version, fromContainerName)
 
 			// Create target container with volumes-from
 			toContainerName := tID + "-to"
@@ -869,7 +869,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			statusCode, _ = createContainer(uClient, url, toContainerName, targetOptions)
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			httpStartContainer(uClient, version, toContainerName)
-			defer httpRemoveContainer(uClient, version, toContainerName)
+			defer httpRemoveContainerForce(uClient, version, toContainerName)
 
 			// Test write permissions
 			httpExecContainer(uClient, version, toContainerName, []string{"sh", "-exc", "echo -n str1 > /mnt1/file1"})
@@ -892,7 +892,7 @@ func ContainerCreate(opt *option.Option, pOpt util.NewOpt) {
 			Expect(statusCode).Should(Equal(http.StatusCreated))
 			out := httpStartContainerAttach(uClient, version, "verify-container")
 			Expect(strings.TrimSpace(out)).Should(Equal("str1str3"))
-			defer httpRemoveContainer(uClient, version, "verify-container")
+			defer httpRemoveContainerForce(uClient, version, "verify-container")
 		})
 
 		It("should create a container with tmpfs mounts", func() {

@@ -104,9 +104,10 @@ func ImageRemove(opt *option.Option) {
 				imageShouldNotExist(defaultImage)
 			})
 			It("should fail to remove if multiple image with same id", func() {
-				// create a new tag will create a reference with same id
-				httpTagImage(uClient, version, defaultImage, "custom-image:latest")
-				imageShouldExist("custom-image:latest")
+				// Use a localhost-prefixed tag to avoid Docker Hub name normalization
+				customTag := "localhost/custom-image:latest"
+				httpTagImage(uClient, version, defaultImage, customTag)
+				imageShouldExist(customTag)
 				res, err := uClient.Do(req)
 				Expect(err).ShouldNot(HaveOccurred())
 				Expect(res.StatusCode).Should(Equal(http.StatusConflict))
@@ -115,15 +116,16 @@ func ImageRemove(opt *option.Option) {
 			It("should successfully remove multiple images with same id using force=true", func() {
 				req, err := http.NewRequest(http.MethodDelete, apiUrl+"?force=true", nil)
 				Expect(err).ShouldNot(HaveOccurred())
-				// create a new tag will create a reference with same id
-				httpTagImage(uClient, version, defaultImage, "custom-image:latest")
-				imageShouldExist("custom-image:latest")
+				// Use a localhost-prefixed tag to avoid Docker Hub name normalization
+				customTag := "localhost/custom-image:latest"
+				httpTagImage(uClient, version, defaultImage, customTag)
+				imageShouldExist(customTag)
 
 				res, err := uClient.Do(req)
 				Expect(err).ShouldNot(HaveOccurred())
 				Expect(res.StatusCode).Should(Equal(http.StatusOK))
 				imageShouldNotExist(defaultImage)
-				imageShouldNotExist("custom-image:latest")
+				imageShouldNotExist(customTag)
 			})
 			// TODO: need to add a e2e test to make sure proper untagged and deleted value is generated for image remove api.
 		})
