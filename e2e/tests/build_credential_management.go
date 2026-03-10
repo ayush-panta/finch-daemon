@@ -4,6 +4,7 @@
 package tests
 
 import (
+	"archive/tar"
 	b64 "encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -24,9 +25,6 @@ import (
 
 	"github.com/runfinch/finch-daemon/api/types"
 	"github.com/runfinch/finch-daemon/e2e/client"
-	"github.com/runfinch/finch-daemon/pkg/archive"
-	"github.com/runfinch/finch-daemon/pkg/ecc"
-	"github.com/runfinch/finch-daemon/pkg/flog"
 )
 
 func CredentialHelper(opt *option.Option, pOpt func([]string, ...option.Modifier) (*option.Option, error)) {
@@ -358,27 +356,48 @@ func CredentialHelper(opt *option.Option, pOpt func([]string, ...option.Modifier
 	})
 }
 
-// createTarFromBuildContext creates a tar archive from the build context directory.
+// createTarFromBuildContext creates a tar archive from the build context directory
+// using pure Go (archive/tar) to avoid dependency on system tar binary.
 func createTarFromBuildContext(buildContextPath string) (io.Reader, error) {
-	logger := flog.NewLogrus()
-	eccCreator := ecc.NewExecCmdCreator()
-	tarCreator := archive.NewTarCreator(eccCreator, logger)
-
-	cmd, err := tarCreator.CreateTarCommand(buildContextPath, true)
-	if err != nil {
-		return nil, err
-	}
-
 	pr, pw := io.Pipe()
-	cmd.SetStdout(pw)
-
 	go func() {
-		err := cmd.Run()
+		tw := tar.NewWriter(pw)
+		err := filepath.Walk(buildContextPath, func(filePath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			relPath, err := filepath.Rel(buildContextPath, filePath)
+			if err != nil {
+				return err
+			}
+			if relPath == "." {
+				return nil
+			}
+			hdr, err := tar.FileInfoHeader(info, "")
+			if err != nil {
+				return err
+			}
+			hdr.Name = relPath
+			if err := tw.WriteHeader(hdr); err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				f, err := os.Open(filepath.Clean(filePath))
+				if err != nil {
+					return err
+				}
+				defer f.Close()
+				if _, err := io.Copy(tw, f); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 		if err != nil {
-			logger.Errorf("Error running tar command: %v", err)
+			pw.CloseWithError(err)
+			return
 		}
-		pw.Close()
+		pw.CloseWithError(tw.Close())
 	}()
-
 	return pr, nil
 }
