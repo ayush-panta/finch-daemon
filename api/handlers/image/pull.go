@@ -89,7 +89,19 @@ func parseNameAndTag(r *http.Request) (string, string, error) {
 		return "", "", fmt.Errorf("fromImage must be specified")
 	}
 
-	// fromImage parameter may include image tag/digest
+	tagParam := r.URL.Query().Get("tag")
+
+	// If an explicit tag param is provided, treat fromImage as the full repo name
+	// (no splitting). This handles images like "localhost:PORT/alpine" where the
+	// colon is part of the host:port, not a name/tag separator.
+	if tagParam != "" {
+		if nameParam == "" {
+			return "", "", fmt.Errorf("invalid image: %s", nameParam)
+		}
+		return nameParam, tagParam, nil
+	}
+
+	// No explicit tag param: fromImage may include an inline tag/digest after '@' or ':'
 	parts := splitRE.Split(nameParam, 2)
 	name := parts[0]
 	if name == "" {
@@ -98,11 +110,6 @@ func parseNameAndTag(r *http.Request) (string, string, error) {
 	var tag string
 	if len(parts) > 1 {
 		tag = parts[1]
-	}
-
-	// image tag
-	if tagParam := r.URL.Query().Get("tag"); tagParam != "" {
-		tag = tagParam
 	}
 	if tag == "" {
 		return "", "", fmt.Errorf("image tag/digest must be specified")

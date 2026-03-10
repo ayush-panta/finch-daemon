@@ -34,8 +34,7 @@ func ImagePull(opt *option.Option) {
 		})
 
 		It("should pull the default image successfully", func() {
-			relativeUrl := fmt.Sprintf("/images/create?fromImage=%s", defaultImage)
-			url := client.ConvertToFinchUrl(version, relativeUrl)
+			url := buildPullURL(version, defaultImage)
 			resp, err := uClient.Post(url, "application/json", nil)
 
 			Expect(err).Should(BeNil())
@@ -45,8 +44,7 @@ func ImagePull(opt *option.Option) {
 		})
 		It("should do nothing if image already exists", func() {
 			httpPullImage(uClient, version, defaultImage)
-			relativeUrl := fmt.Sprintf("/images/create?fromImage=%s", defaultImage)
-			url := client.ConvertToFinchUrl(version, relativeUrl)
+			url := buildPullURL(version, defaultImage)
 			resp, err := uClient.Post(url, "application/json", nil)
 
 			Expect(err).Should(BeNil())
@@ -121,6 +119,28 @@ func ImagePull(opt *option.Option) {
 			imageShouldNotExist(alpineImage)
 		})
 	})
+}
+
+// buildPullURL constructs a /images/create URL with fromImage and tag as separate
+// query params, so that images like "localhost:PORT/alpine:latest" are parsed
+// correctly by the pull handler.
+func buildPullURL(version, imageName string) string {
+	repo := imageName
+	tag := ""
+	if lastColon := strings.LastIndex(imageName, ":"); lastColon > 0 {
+		candidate := imageName[lastColon+1:]
+		if !strings.Contains(candidate, "/") {
+			repo = imageName[:lastColon]
+			tag = candidate
+		}
+	}
+	var relativeUrl string
+	if tag != "" {
+		relativeUrl = fmt.Sprintf("/images/create?fromImage=%s&tag=%s", repo, tag)
+	} else {
+		relativeUrl = fmt.Sprintf("/images/create?fromImage=%s", imageName)
+	}
+	return client.ConvertToFinchUrl(version, relativeUrl)
 }
 
 // waitForResponse waits until the http response is closed with EOF.

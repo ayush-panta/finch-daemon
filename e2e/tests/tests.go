@@ -205,10 +205,29 @@ func removeImage(imageName string) {
 // Helper functions for HTTP API calls to replace command.Run usage
 
 // httpPullImage pulls an image using the HTTP API.
+// Passes fromImage and tag as separate query params so the pull handler
+// can correctly handle images like "localhost:PORT/alpine:latest" where
+// the colon in host:port must not be treated as a name/tag separator.
 func httpPullImage(uClient *http.Client, version, imageName string) {
-	relativeUrl := fmt.Sprintf("/images/create?fromImage=%s", imageName)
-	url := client.ConvertToFinchUrl(version, relativeUrl)
-	resp, err := uClient.Post(url, "application/json", nil)
+	// Split on the last ':' to separate repo from tag, but only if the part
+	// after the last ':' looks like a tag (no '/' in it).
+	repo := imageName
+	tag := ""
+	if lastColon := strings.LastIndex(imageName, ":"); lastColon > 0 {
+		candidate := imageName[lastColon+1:]
+		if !strings.Contains(candidate, "/") {
+			repo = imageName[:lastColon]
+			tag = candidate
+		}
+	}
+	var relativeUrl string
+	if tag != "" {
+		relativeUrl = fmt.Sprintf("/images/create?fromImage=%s&tag=%s", repo, tag)
+	} else {
+		relativeUrl = fmt.Sprintf("/images/create?fromImage=%s", imageName)
+	}
+	u := client.ConvertToFinchUrl(version, relativeUrl)
+	resp, err := uClient.Post(u, "application/json", nil)
 	gomega.Expect(err).Should(gomega.BeNil())
 	defer resp.Body.Close()
 	// Read body to completion to ensure image is fully pulled
@@ -229,7 +248,7 @@ func httpTagImage(uClient *http.Client, version, sourceImage, targetImage string
 		tag = targetImage[lastColon+1:]
 	}
 	relativeUrl := fmt.Sprintf("/images/%s/tag?repo=%s&tag=%s",
-		url.PathEscape(sourceImage), url.QueryEscape(repo), url.QueryEscape(tag))
+		sourceImage, url.QueryEscape(repo), url.QueryEscape(tag))
 	u := client.ConvertToFinchUrl(version, relativeUrl)
 	resp, err := uClient.Post(u, "application/json", nil)
 	gomega.Expect(err).Should(gomega.BeNil())
@@ -239,7 +258,7 @@ func httpTagImage(uClient *http.Client, version, sourceImage, targetImage string
 
 // httpPushImage pushes an image using the HTTP API.
 func httpPushImage(uClient *http.Client, version, imageName string) {
-	relativeUrl := fmt.Sprintf("/images/%s/push", url.PathEscape(imageName))
+	relativeUrl := fmt.Sprintf("/images/%s/push", imageName)
 	u := client.ConvertToFinchUrl(version, relativeUrl)
 	resp, err := uClient.Post(u, "application/json", nil)
 	gomega.Expect(err).Should(gomega.BeNil())
